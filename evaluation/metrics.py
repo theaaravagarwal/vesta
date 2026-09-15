@@ -22,13 +22,13 @@ def wilson(successes, total):
     return [max(0, center - radius), min(1, center + radius)]
 
 
-def match_events(expected, predicted, threshold=0.3):
+def match_events(expected, predicted, threshold=0.3, ignore_action=False):
     # Maximum-cardinality matching avoids counting one truth event twice.
     edges = [
         [
             j
             for j, truth in enumerate(expected)
-            if pred["action"] == truth["action"]
+            if (ignore_action or pred["action"] == truth["action"])
             and temporal_iou(pred, truth) >= threshold
         ]
         for pred in predicted
@@ -81,7 +81,7 @@ def validate_manifest(manifest):
                     raise ValueError("invalid labeled event span")
 
 
-def score(manifest, predictions, threshold=0.3):
+def score(manifest, predictions, threshold=0.3, ignore_action=False):
     validate_manifest(manifest)
     expected_ids = {c["id"] for c in manifest["clips"]}
     if set(predictions) - expected_ids:
@@ -113,22 +113,24 @@ def score(manifest, predictions, threshold=0.3):
             ):
                 raise ValueError(f"invalid prediction span for {cid}")
         truth = clip.get("events", [])
-        pairs = match_events(truth, events, threshold)
+        pairs = match_events(truth, events, threshold, ignore_action=ignore_action)
         tp += len(pairs)
         fp += len(events) - len(pairs)
         fn += len(truth) - len(pairs)
-        for action in sorted({e["action"] for e in truth + events}):
-            stats = by_action.setdefault(
-                action, {"true_positive": 0, "false_positive": 0, "false_negative": 0}
-            )
-            matched = sum(truth[j]["action"] == action for j, i in pairs)
-            stats["true_positive"] += matched
-            stats["false_positive"] += (
-                sum(e["action"] == action for e in events) - matched
-            )
-            stats["false_negative"] += (
-                sum(e["action"] == action for e in truth) - matched
-            )
+        if not ignore_action:
+            for action in sorted({e["action"] for e in truth + events}):
+                stats = by_action.setdefault(
+                    action,
+                    {"true_positive": 0, "false_positive": 0, "false_negative": 0},
+                )
+                matched = sum(truth[j]["action"] == action for j, i in pairs)
+                stats["true_positive"] += matched
+                stats["false_positive"] += (
+                    sum(e["action"] == action for e in events) - matched
+                )
+                stats["false_negative"] += (
+                    sum(e["action"] == action for e in truth) - matched
+                )
         seconds += clip["duration_s"]
         evaluated.append(cid)
         for j, i in pairs:
@@ -136,6 +138,9 @@ def score(manifest, predictions, threshold=0.3):
             end_errors.append(abs(truth[j]["end_s"] - events[i]["end_s"]))
     return {
         "by_action": by_action,
+        "matching_mode": "action_agnostic_temporal"
+        if ignore_action
+        else "action_aware_temporal",
         "temporal_iou_threshold": threshold,
         "true_positive": tp,
         "false_positive": fp,

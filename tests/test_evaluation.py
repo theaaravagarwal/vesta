@@ -39,7 +39,9 @@ class MetricsTests(unittest.TestCase):
         self.assertIsNone(result["recall"])
 
     def test_unreviewed_errors_remain_visible(self):
-        result = score(self.manifest("unreviewed"), {"a": {"status": "error", "events": []}})
+        result = score(
+            self.manifest("unreviewed"), {"a": {"status": "error", "events": []}}
+        )
         self.assertEqual(result["failed_predictions"], ["a"])
         self.assertEqual(result["unreviewed_clips"], ["a"])
 
@@ -53,6 +55,17 @@ class MetricsTests(unittest.TestCase):
     def test_action_mismatch(self):
         a = [{"action": "walking", "start_s": 10, "end_s": 20}]
         self.assertEqual(match_events(self.manifest()["clips"][0]["events"], a), [])
+
+    def test_ignore_action_matches_temporally_but_keeps_duplicates_false_alerts(self):
+        events = [{"action": "walking", "start_s": 10, "end_s": 20}] * 2
+        result = score(
+            self.manifest(),
+            {"a": {"status": "done", "events": events}},
+            ignore_action=True,
+        )
+        self.assertEqual((result["true_positive"], result["false_positive"]), (1, 1))
+        self.assertEqual(result["matching_mode"], "action_agnostic_temporal")
+        self.assertEqual(result["by_action"], {})
 
     def test_perfect_match(self):
         m = self.manifest()

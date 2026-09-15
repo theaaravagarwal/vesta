@@ -1,0 +1,217 @@
+{
+  "date": "2026-09-15",
+  "purpose": "Exploratory publisher-annotated public-video baseline; not canonical held-out or campus accuracy",
+  "baseline": {
+    "captured_at_utc": "2026-09-15T19:40:44.141379+00:00",
+    "deployment_git_head": "6a82bf5fec9ee98ced4427bb24f4fe762cee4cb2",
+    "behavior_init_sha256": "bc71dbc0ca4224c2a6eb96b26601a9cee0192df55a78a0a51293ab3fe1ebe31d",
+    "inference_service": "active",
+    "web_service": "active",
+    "llm_endpoint": "http://127.0.0.1:8078",
+    "llm_model": "qwen2.5vl:3b",
+    "llm_model_digest": "fb90415cde1ef08aa669ae74b082d49b158729b6db1ab183c941417d507e71a1",
+    "llm_model_size_bytes": 3200627168,
+    "gpu_name": "NVIDIA GeForce RTX 4090 Laptop GPU",
+    "gpu_memory_total": "16376 MiB",
+    "nvidia_driver": "595.84",
+    "camera_accessed": false,
+    "secret_values_recorded": false
+  },
+  "annotation_revision": "e478cb5b2277c6b7cf6a1dc4691021592003e216",
+  "annotation_sha256": "8912bc02c1871e177ffc7f45ed54395c0e34e1a8007a474b91309ce8a816f981",
+  "hf_revision": "8d783bb55269300114f9773a3c068b48a4940e4a",
+  "config_version": "temporal-v2-schema",
+  "attempted_video_seconds": 260.596032,
+  "elapsed_s": 371.119,
+  "expected_events_total": 8,
+  "exact_action": {
+    "by_action": {
+      "access_interaction": {
+        "true_positive": 0,
+        "false_positive": 4,
+        "false_negative": 0
+      },
+      "climbing": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 3
+      },
+      "object_tampering": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 2
+      },
+      "boundary_entry": {
+        "true_positive": 0,
+        "false_positive": 0,
+        "false_negative": 2
+      },
+      "other_observable_event": {
+        "true_positive": 0,
+        "false_positive": 2,
+        "false_negative": 0
+      }
+    },
+    "matching_mode": "action_aware_temporal",
+    "temporal_iou_threshold": 0.3,
+    "true_positive": 0,
+    "false_positive": 6,
+    "false_negative": 7,
+    "precision": 0.0,
+    "recall": 0.0,
+    "precision_wilson_95": [
+      0,
+      0.3903430336530645
+    ],
+    "recall_wilson_95": [
+      0,
+      0.35433884297520657
+    ],
+    "false_alerts_per_video_hour": 106.89945673052713,
+    "mean_start_error_s": null,
+    "mean_end_error_s": null,
+    "evaluated_seconds": 202.059025,
+    "evaluated_clips": [
+      "uca-01",
+      "uca-02",
+      "uca-03",
+      "uca-05",
+      "uca-06"
+    ],
+    "unreviewed_clips": [],
+    "missing_predictions": [],
+    "failed_predictions": [
+      "uca-04"
+    ],
+    "complete": false,
+    "note": "Conditional on successfully analyzed, reviewed clips. Failures are not safe negatives. Wilson intervals treat events as independent; correlated camera/session data needs grouped analysis."
+  },
+  "action_agnostic": {
+    "by_action": {},
+    "matching_mode": "action_agnostic_temporal",
+    "temporal_iou_threshold": 0.3,
+    "true_positive": 1,
+    "false_positive": 5,
+    "false_negative": 6,
+    "precision": 0.16666666666666666,
+    "recall": 0.14285714285714285,
+    "precision_wilson_95": [
+      0.03005258587173032,
+      0.563509436563646
+    ],
+    "recall_wilson_95": [
+      0.02567895594897479,
+      0.51313450331903
+    ],
+    "false_alerts_per_video_hour": 89.08288060877261,
+    "mean_start_error_s": 2.1999999999999993,
+    "mean_end_error_s": 0.1999999999999993,
+    "evaluated_seconds": 202.059025,
+    "evaluated_clips": [
+      "uca-01",
+      "uca-02",
+      "uca-03",
+      "uca-05",
+      "uca-06"
+    ],
+    "unreviewed_clips": [],
+    "missing_predictions": [],
+    "failed_predictions": [
+      "uca-04"
+    ],
+    "complete": false,
+    "note": "Conditional on successfully analyzed, reviewed clips. Failures are not safe negatives. Wilson intervals treat events as independent; correlated camera/session data needs grouped analysis."
+  },
+  "clips": [
+    {
+      "id": "uca-01",
+      "source_id": "Burglary081",
+      "source_sha256": "105ad78206b123709375f1a45e07d7355d089ec6c35c9f3a1c778a8edb05e027",
+      "derived_sha256": "aff251fdd62bd6a63513ad89ec8a651d870f42c101fa9b3842beceaa17e39e83",
+      "source_crop_s": null,
+      "duration_s": 13.855011,
+      "expected_events": 2,
+      "status": "done",
+      "candidate_events": 1,
+      "elapsed_s": 22.18,
+      "error": null
+    },
+    {
+      "id": "uca-02",
+      "source_id": "Burglary084",
+      "source_sha256": "27eb076df8ee9d990b42d39b0c1238c1660c48a088a38aae51662b80100508be",
+      "derived_sha256": "0f6119ed8698b463dac4a7dbfe27c3ab25db3c36ccfe49a8f822094b5924dd46",
+      "source_crop_s": [
+        0.0,
+        70.0
+      ],
+      "duration_s": 70.0,
+      "expected_events": 3,
+      "status": "done",
+      "candidate_events": 1,
+      "elapsed_s": 100.219,
+      "error": null
+    },
+    {
+      "id": "uca-03",
+      "source_id": "Burglary076",
+      "source_sha256": "87043f0463dfc3187dc0179577d0e94f5916263efe960f3d39b43c201e85f4ad",
+      "derived_sha256": "bd8854928693593f744783ea584609763bded2aa18d5602e8ee3a31dcace98c6",
+      "source_crop_s": [
+        80.0,
+        150.0
+      ],
+      "duration_s": 70.0,
+      "expected_events": 2,
+      "status": "done",
+      "candidate_events": 0,
+      "elapsed_s": 100.219,
+      "error": null
+    },
+    {
+      "id": "uca-04",
+      "source_id": "Vandalism034",
+      "source_sha256": "8aab06b2d1bb092687def6f06922ec917acbd032316886603292ae7c1107a6d2",
+      "derived_sha256": "df5afed820baee6c0497a9c770b44f18f857aef10da1c0e968c0718ca48c4a30",
+      "source_crop_s": null,
+      "duration_s": 58.537007,
+      "expected_events": 1,
+      "status": "error",
+      "candidate_events": 0,
+      "elapsed_s": 66.181,
+      "error": "Unterminated string starting at: line 65 column 9 (char 2721)"
+    },
+    {
+      "id": "uca-05",
+      "source_id": "Normal_Videos609",
+      "source_sha256": "4f3d84f87d43e80f9a9fcadb8ae061c11f6c7362ada26c88661fc22ee99752a9",
+      "derived_sha256": "a054a8702f1e3cf90b35f2c36346bfc8746e3e828a2e97cf6c3a15a6e625920f",
+      "source_crop_s": [
+        0.0,
+        20.13
+      ],
+      "duration_s": 20.108005,
+      "expected_events": 0,
+      "status": "done",
+      "candidate_events": 2,
+      "elapsed_s": 34.139,
+      "error": null
+    },
+    {
+      "id": "uca-06",
+      "source_id": "Normal_Videos610",
+      "source_sha256": "a3349e080576bccb6646e8f3c23cc4cd48d7ae4e166854e4dbbda509ab4ade6f",
+      "derived_sha256": "f8f2b14b792114265c5f88d811b2df9eb7b19c418ee8ae42109de5e686baa1cb",
+      "source_crop_s": [
+        0.0,
+        28.12
+      ],
+      "duration_s": 28.096009,
+      "expected_events": 0,
+      "status": "done",
+      "candidate_events": 2,
+      "elapsed_s": 48.181,
+      "error": null
+    }
+  ]
+}

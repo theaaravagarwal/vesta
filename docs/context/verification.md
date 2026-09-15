@@ -33,3 +33,10 @@ node --check static/review.js
 ```
 
 See [evaluation tooling](../../evaluation/README.md) for replay and metrics commands, and [compute operations](compute-host.md) for service access and GPU scheduling.
+
+## Subsequent labeled public evaluation
+
+The [six-video UCA baseline](public-benchmark.md) now provides an exploratory
+publisher-labeled test. It exposed missed actions, false alerts on ordinary
+activity, and one failed job. The earlier MEVA smoke success does not imply
+behavior detection quality. See that report for complete counts and source provenance.

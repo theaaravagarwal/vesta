@@ -48,3 +48,20 @@ self-certified training labels. Export and adjudicate before fine-tuning. There 
 no automated identity enrollment, self-training, or model promotion in this demo.
 Fence-climbing and tampering coverage must be added and independently labeled;
 these three samples do not establish it.
+
+## Public publisher-labeled benchmark
+
+`fetch_uca.py` imports a fixed six-video UCA subset using timestamped publisher
+annotations and checksum-verified Hugging Face media. See
+[selection, licensing and results](../docs/context/public-benchmark.md). The
+action mapping is explicit and exploratory; no user labeling is needed to run it.
+
+```bash
+.venv/bin/python evaluation/fetch_uca.py --download
+.venv/bin/python evaluation/replay.py datasets/uca-demo/manifest.json --output runs/uca-predictions.json
+.venv/bin/python evaluation/evaluate.py datasets/uca-demo/manifest.json runs/uca-predictions.json
+.venv/bin/python evaluation/evaluate.py datasets/uca-demo/manifest.json runs/uca-predictions.json --ignore-action
+```
+
+Action-agnostic matching evaluates temporal overlap only and explicitly omits
+per-action statistics. It is not a claim that the predicted action was correct.

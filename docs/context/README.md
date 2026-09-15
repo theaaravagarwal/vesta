@@ -19,3 +19,5 @@ Frigate is a reference for event review, recording retention, and detection work
 - [Evaluation tooling](../../evaluation/README.md)
 - [Accepted implementation plan](implementation-plan.md)
 - [Verification results and limitations](verification.md)
+
+- [Public labeled-video benchmark](public-benchmark.md)
