@@ -2,9 +2,11 @@ import shutil
 import tempfile
 import unittest
 import os
+import json
 from pathlib import Path
+from unittest.mock import patch
 
-from behavior import Store, _merge, _starts, _valid_scene, create_app
+from behavior import Store, TemporalAnalyzer, _merge, _starts, _valid_scene, create_app
 
 
 class FakeAnalyzer:
@@ -72,6 +74,40 @@ class BehaviorTests(unittest.TestCase):
         self.assertEqual(_starts(8), [0.0])
         self.assertEqual(_starts(12), [0.0, 4.0])
         self.assertEqual(_starts(20), [0.0, 4.0, 8.0, 12.0])
+
+    def test_length_truncation_retries_once_and_succeeds(self):
+        valid = {"events": [{"start_s": 1, "end_s": 2, "action": "climbing", "description": "person climbs visible fence", "evidence": ["frames at 1.0 and 2.0 show ascent"], "uncertainty": "partial view"}]}
+        payloads = [
+            {"model": "test", "choices": [{"finish_reason": "length", "message": {"content": "{\"events\":["}}]},
+            {"model": "test", "choices": [{"finish_reason": "stop", "message": {"content": json.dumps(valid)}}]},
+        ]
+        class Response:
+            def __init__(self, data): self.data = data
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self): return json.dumps(self.data).encode()
+        analyzer = TemporalAnalyzer()
+        with patch("urllib.request.urlopen", side_effect=[Response(x) for x in payloads]) as open_mock:
+            self.assertEqual(analyzer.infer([], 0, 8, {})[0]["action"], "climbing")
+        self.assertEqual(open_mock.call_count, 2)
+
+    def test_exhausted_length_is_explicit_failure(self):
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self): return b'{"model":"test","choices":[{"finish_reason":"length","message":{"content":"{\\"events\\":["}}]}'
+        with patch("urllib.request.urlopen", return_value=Response()):
+            with self.assertRaisesRegex(RuntimeError, "attempt=2.*finish_reason=length"):
+                TemporalAnalyzer().infer([], 0, 8, {})
+
+    def test_malformed_nontruncated_response_is_explicit_failure(self):
+        class Response:
+            def __enter__(self): return self
+            def __exit__(self, *args): return False
+            def read(self): return b'{"model":"test","choices":[{"finish_reason":"stop","message":{"content":"not json"}}]}'
+        with patch("urllib.request.urlopen", return_value=Response()):
+            with self.assertRaisesRegex(RuntimeError, "malformed JSON"):
+                TemporalAnalyzer().infer([], 0, 8, {})
 
     def test_malformed_scene_rejected(self):
         self.video()

@@ -28,7 +28,12 @@ from werkzeug.utils import secure_filename
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm"}
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
 WINDOW_S, STRIDE_S, SAMPLE_FPS = 8.0, 4.0, 2.0
-CONFIG_VERSION = "temporal-v2-schema"
+EVENT_POLICY = os.getenv("BEHAVIOR_EVENT_POLICY", "baseline")
+if EVENT_POLICY not in {"baseline", "observable-v3"}:
+    raise ValueError("BEHAVIOR_EVENT_POLICY must be baseline or observable-v3")
+CONFIG_VERSION = ("temporal-v3-actions" if EVENT_POLICY == "observable-v3" else "temporal-v3-bounded") + ("-focus" if os.getenv("BEHAVIOR_FOCUS_VIEW", "0") == "1" else "")
+if os.getenv("BEHAVIOR_FOCUS_VIEW", "0") == "1" and EVENT_POLICY != "observable-v3":
+    raise ValueError("Focus views are experimental and require observable-v3")
 
 
 def utcnow() -> str:
@@ -231,6 +236,62 @@ class TemporalAnalyzer:
         "BEHAVIOR_VLM_BASE_URL", os.getenv("LLAMACPP_BASE_URL", "http://127.0.0.1:8078")
     ).rstrip("/")
 
+    def _request_events(self, payload: dict, token_budget: int, attempt: int) -> tuple[dict, str, str]:
+        """Issue one structured request and retain only safe diagnostic metadata."""
+        import urllib.request
+
+        request_payload = {**payload, "max_tokens": token_budget}
+        req = urllib.request.Request(
+            self.base_url + "/v1/chat/completions",
+            data=_json(request_payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=180) as response:
+                data = json.loads(response.read())
+        except Exception as exc:
+            raise RuntimeError(
+                f"event model request failed (attempt={attempt}, model={self.model_name}, finish_reason=unavailable): {exc}"
+            ) from exc
+        model = str(data.get("model") or self.model_name) if isinstance(data, dict) else self.model_name
+        try:
+            choice = data["choices"][0]
+            finish_reason = str(choice.get("finish_reason") or "unknown")
+            content = choice["message"]["content"]
+        except Exception as exc:
+            raise RuntimeError(
+                f"event model response failed (attempt={attempt}, model={model}, finish_reason=unknown): malformed response"
+            ) from exc
+        if finish_reason == "length":
+            return {}, finish_reason, model
+        try:
+            parsed = json.loads(content) if isinstance(content, str) else content
+        except Exception as exc:
+            raise RuntimeError(
+                f"event model response failed (attempt={attempt}, model={model}, finish_reason={finish_reason}): malformed JSON"
+            ) from exc
+        return parsed, finish_reason, model
+
+    @staticmethod
+    def _validate_event_output(parsed: object) -> list[dict]:
+        if not isinstance(parsed, dict) or not isinstance(parsed.get("events"), list):
+            raise ValueError("events must be an array")
+        events = parsed["events"]
+        if len(events) > 4:
+            raise ValueError("too many events")
+        allowed_actions = {"climbing", "boundary_entry", "access_interaction", "object_tampering", "other_observable_event"}
+        for event in events:
+            if not isinstance(event, dict) or set(event) != {"start_s", "end_s", "action", "description", "evidence", "uncertainty"}:
+                raise ValueError("invalid event fields")
+            if event["action"] not in allowed_actions or not isinstance(event["description"], str) or not 1 <= len(event["description"]) <= 240:
+                raise ValueError("invalid event action or description")
+            if not isinstance(event["uncertainty"], str) or len(event["uncertainty"]) > 240:
+                raise ValueError("invalid uncertainty")
+            evidence = event["evidence"]
+            if not isinstance(evidence, list) or not 1 <= len(evidence) <= 3 or any(not isinstance(item, str) or not 1 <= len(item) <= 160 for item in evidence):
+                raise ValueError("invalid evidence")
+        return events
+
     def metadata(self, path: Path) -> float:
         p = subprocess.run(
             [
@@ -342,6 +403,7 @@ class TemporalAnalyzer:
                     "time_s": stamp,
                     "track_id": str(int(i)),
                     "box": [round(float(v), 1) for v in b],
+                    "normalized_box": [round(float(v) / (rs[0].orig_shape[1] if k % 2 == 0 else rs[0].orig_shape[0]), 6) for k, v in enumerate(b)],
                 }
                 for i, b in zip(ids, boxes)
             )
@@ -371,17 +433,40 @@ class TemporalAnalyzer:
                     },
                 }
             )
-        prompt = (
-            "Review this chronological 8-second video window. Frames are ordered and correspond to these exact video timestamps: "
-            f"{timestamps}. Create events only for concrete non-routine candidate behaviors worth human review: climbing, unusual boundary entry, repeated access interaction, possible object tampering, or another specifically observable non-routine action. "
-                "Routine walking, gathering, or carrying tools alone must produce an empty events list. Use action only from climbing, boundary_entry, access_interaction, object_tampering, other_observable_event. "
-                "Do not label criminality. Keep an observable candidate event when its interpretation is uncertain and explain that uncertainty. Mention after-hours only when capture context supplies an approved schedule. "
-                "For no qualifying observation, return exactly {\"events\":[]}; never create a placeholder event. "
-            "Do not infer identity, intent, guilt, danger, or clothing-based traits. Geometry is advisory, not proof. "
-            "Return JSON {events:[{start_s,end_s,action,description,evidence,uncertainty}]}; use an empty array when uncertain. "
-            f"Window is {start:.2f}-{end:.2f}s; scene context: {_json(scene)}; "
-            f"optional person-track observations (not evidence of involvement): {_json((tracks or [])[:80])}; capture context: {_json(capture_context or {})}"
+        focus_note = (
+            "Each image has two panels of the SAME moment: full scene LEFT, enlarged detail RIGHT. These are not two people or two cameras. "
+            if frames and frames[0].stem.endswith("-focus") else ""
         )
+        if EVENT_POLICY == "observable-v3":
+            prompt = (
+                "Review the chronological frames for observable physical actions, using the supplied timestamps. "
+                + focus_note
+                + "Compare changes across frames. Return at most four concise events, one per continuous action. "
+                "Action definitions: climbing = lifting the body onto or over a wall/fence/obstacle or climbing through a window; ordinary stairs are not climbing. "
+                "boundary_entry = visibly passing through a window or over/through an unusual barrier; routine door entry is not a candidate. "
+                "access_interaction = repeated forceful pulls, pushes or attempts at a closed access point; simply opening/closing a door is not enough. "
+                "object_tampering = visible striking, prying, cutting or damaging an object; merely touching or standing beside it is not enough. "
+                "other_observable_event = another concrete non-routine physical action such as a fall or physical conflict, described specifically. "
+                "Standing, walking, talking, gathering, ordinary cart pushing, carrying items and routine vehicle interaction must not create events by themselves. "
+                "For each event give first and last supporting timestamps, the specific physical action, and one to three distinct observations with timestamps. "
+                "Do not infer identity, intent, guilt, authorization or traits from appearance. Uncertainty about intent does not erase a visible action: describe the action and state what cannot be determined. "
+                "If no qualifying physical action is visible, return exactly {\"events\":[]}. Never emit a placeholder, generic person-presence alert or speculation without visible evidence. "
+                f"Frame timestamps: {timestamps}. Window: {start:.2f}-{end:.2f}s. "
+                f"Approved scene context (advisory, not proof): {_json(scene)}. "
+                f"Capture context: {_json(capture_context or {})}. Mention a schedule only when explicitly supplied."
+            )
+        else:
+            prompt = (
+                "Review this chronological 8-second video window. Frames are ordered and correspond to these exact video timestamps: "
+                f"{timestamps}. Create events only for concrete non-routine candidate behaviors worth human review: climbing, unusual boundary entry, repeated access interaction, possible object tampering, or another specifically observable non-routine action. "
+                    "Routine walking, gathering, or carrying tools alone must produce an empty events list. Use action only from climbing, boundary_entry, access_interaction, object_tampering, other_observable_event. "
+                    "Do not label criminality. Keep an observable candidate event when its interpretation is uncertain and explain that uncertainty. Mention after-hours only when capture context supplies an approved schedule. "
+                    "For no qualifying observation, return exactly {\"events\":[]}; never create a placeholder event. "
+                "Do not infer identity, intent, guilt, danger, or clothing-based traits. Geometry is advisory, not proof. "
+                "Return JSON {events:[{start_s,end_s,action,description,evidence,uncertainty}]}; use an empty array when uncertain. "
+                f"Window is {start:.2f}-{end:.2f}s; scene context: {_json(scene)}; "
+                f"optional person-track observations (not evidence of involvement): {_json((tracks or [])[:80])}; capture context: {_json(capture_context or {})}"
+            )
         event_schema = {
             "type": "object", "required": ["events"], "additionalProperties": False,
             "properties": {"events": {"type": "array", "items": {
@@ -389,7 +474,13 @@ class TemporalAnalyzer:
                 "properties": {"start_s": {"type": "number"}, "end_s": {"type": "number"}, "action": {"type": "string", "enum": ["climbing", "boundary_entry", "access_interaction", "object_tampering", "other_observable_event"]}, "description": {"type": "string", "minLength": 1}, "evidence": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}, "uncertainty": {"type": "string"}}
             }}}
         }
-        body = _json(
+        event_item = event_schema["properties"]["events"]["items"]
+        event_schema["properties"]["events"]["maxItems"] = 4
+        event_item["properties"]["description"]["maxLength"] = 240
+        event_item["properties"]["evidence"]["maxItems"] = 3
+        event_item["properties"]["evidence"]["items"]["maxLength"] = 160
+        event_item["properties"]["uncertainty"]["maxLength"] = 240
+        payload = (
             {
                 "model": self.model_name,
                 "messages": [
@@ -398,8 +489,7 @@ class TemporalAnalyzer:
                         "content": [{"type": "text", "text": prompt}, *images],
                     }
                 ],
-                "temperature": 0.1,
-                "max_tokens": int(os.getenv("BEHAVIOR_EVENT_MAX_TOKENS", "768")),
+                "temperature": 0.0 if EVENT_POLICY == "observable-v3" else 0.1,
                 "response_format": {
                     "type": "json_schema",
                     "json_schema": {
@@ -409,19 +499,22 @@ class TemporalAnalyzer:
                     },
                 },
             }
-        ).encode()
-        req = urllib.request.Request(
-            self.base_url + "/v1/chat/completions",
-            data=body,
-            headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=180) as response:
-            data = json.loads(response.read())
-        content = data["choices"][0]["message"]["content"]
-        parsed = json.loads(content) if isinstance(content, str) else content
-        if not isinstance(parsed, dict) or not isinstance(parsed.get("events"), list):
-            raise RuntimeError("model returned malformed event output")
-        return parsed["events"]
+        initial = min(4096, max(1, int(os.getenv("BEHAVIOR_EVENT_MAX_TOKENS", "1536"))))
+        retry = min(4096, max(initial, int(os.getenv("BEHAVIOR_EVENT_RETRY_MAX_TOKENS", "3072"))))
+        for attempt, budget in enumerate((initial, retry), 1):
+            parsed, finish_reason, model = self._request_events(payload, budget, attempt)
+            if finish_reason == "length":
+                if attempt == 2:
+                    raise RuntimeError(f"event model response failed (attempt=2, model={model}, finish_reason=length): output truncated after retry")
+                import logging
+                logging.getLogger(__name__).warning("Retrying truncated event response: model=%s attempt=%s budget=%s", model, attempt, budget)
+                continue
+            try:
+                return self._validate_event_output(parsed)
+            except ValueError as exc:
+                raise RuntimeError(f"event model response failed (attempt={attempt}, model={model}, finish_reason={finish_reason}): {exc}") from exc
+        raise RuntimeError(f"event model response failed (attempt=2, model={self.model_name}, finish_reason=length): output truncated after retry")
 
     def suggest_scene(self, frame: Path) -> list[dict]:
         """Ask the same local VLM for editable, explicitly uncertain proposals."""
@@ -689,6 +782,9 @@ class BehaviorWorker:
             window_tracks = [
                 o for o in track_observations if start <= o["time_s"] <= end
             ]
+            if os.getenv("BEHAVIOR_FOCUS_VIEW", "0") == "1":
+                from .views import context_detail_frames
+                frames = context_detail_frames(frames, window_tracks)
             with self.model_lock:
                 observations = self.analyzer.infer(
                     frames, start, end, scene, window_tracks, capture_context

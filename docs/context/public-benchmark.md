@@ -83,3 +83,38 @@ Do not train or deploy campus alerts based on these six clips.
 The importer and matching changes pass 24 unit/API/evaluation tests. Source media
 and raw predictions remain on the compute host in `datasets/uca-demo` and
 `runs/uca-predictions.json`; the review UI contains the six neutral sample uploads.
+
+## Rejected detection experiment — observable-v3
+
+The follow-up compared the same three development clips (`uca-01`, `uca-04`,
+`uca-05`) with clearer action definitions and bounded output, first using 3B,
+then 7B. Each run used a separate runtime database. No original results were
+replaced. Zoomed focus views were **disabled** in both runs.
+
+| Candidate | Completed jobs | Matched targets (3 total) | Ordinary-clip alerts | Wall time |
+| --- | ---: | ---: | ---: | ---: |
+| observable-v3 + 3B | 3/3 | 0 | 0 | 136.527s |
+| observable-v3 + 7B | 3/3 | 0 | 0 | 174.537s |
+
+Both candidates suppressed all events. Neither is an accepted detection
+improvement. The 7B model and the new event policy were **not promoted**.
+No additional videos or focus variants were tested after scope was narrowed.
+This was development testing on previously inspected clips, not held-out testing.
+
+The main service retains its previous 3B event policy and now uses bounded
+response handling (`temporal-v3-bounded`): at most four events, bounded evidence
+and text, 1536 initial output tokens, and one retry at 3072 tokens only when the
+provider explicitly reports truncation. A second truncation or malformed
+response fails visibly; it never becomes an empty safe result. Thirty tests pass,
+including actual truncated-JSON retry and exhausted-retry cases. The production
+policy's known detection failures remain unresolved.
+
+For reproducibility, `evaluation.serve:create_app()` selects the rejected
+`observable-v3` policy only in an explicitly isolated experiment runtime.
+Production defaults to `BEHAVIOR_EVENT_POLICY=baseline`. Optional focus views
+require the experimental policy and remain disabled; they have not been scored.
+Raw run artifacts are `runs/v3-{3b,7b}-predictions.json` on the host. The candidate
+7B model is still downloaded but not selected by the main service; digest
+`5ced39dfa4bac325dc183dd1e4febaa1c46b3ea28bce48896c8e69c1e79611cc`.
+[Official model metadata](https://ollama.com/library/qwen2.5vl:7b) and
+[structured-output API reference](https://docs.ollama.com/capabilities/structured-outputs).
