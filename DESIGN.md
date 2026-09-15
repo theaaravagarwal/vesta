@@ -12,7 +12,7 @@ Operate mode. The layout places the video and event timeline at the center of th
 
 ## Type and Color
 
-Use the local system sans stack for compact product UI. Use the monospace stack only for timestamps and metadata. Neutral surfaces carry most hierarchy; amber marks the primary action/current item, green denotes confirmed, red denotes a dismissed or failed state, and blue marks advisory scene work.
+Use the local system sans stack for compact product UI. The queue title is 24px, section headings 17px, and body text 14px, giving the primary heading a clear size step. Use the monospace stack only for timestamps and metadata. Neutral surfaces carry most hierarchy; amber marks the primary action/current item, green denotes confirmed, red denotes a dismissed or failed state, and blue marks advisory scene work.
 
 ## Components
 
