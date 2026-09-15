@@ -21,3 +21,5 @@ Frigate is a reference for event review, recording retention, and detection work
 - [Verification results and limitations](verification.md)
 
 - [Public labeled-video benchmark](public-benchmark.md)
+
+- [Broader dataset survey and Mobius sample test](dataset-survey.md)
