@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Vesta review</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%23a74e1d'/%3E%3Cpath d='M8 8h4l4 12 4-12h4l-6 16h-4z' fill='white'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="{{ url_for('static', filename='review.css') }}">
+</head>
+<body>
+  <a class="skip-link" href="#workspace">Skip to review workspace</a>
+  <header class="topbar">
+    <a class="brand" href="/review" aria-label="Vesta review home"><span class="brand-mark" aria-hidden="true">V</span><span>Vesta</span><span class="brand-divider">/</span><span class="brand-context">Review</span></a>
+    <div class="system-state" id="system-state" aria-live="polite"><span class="state-dot" aria-hidden="true"></span><span>Checking review service…</span></div>
+  </header>
+  <main class="app-shell" id="workspace">
+    <aside class="video-rail" aria-label="Video library">
+      <div class="rail-head"><div><h1>Review queue</h1><p id="video-count">Loading videos…</p></div></div>
+      <form id="upload-form" class="upload-panel">
+        <label class="file-drop" for="video-file"><input id="video-file" name="video" type="file" accept="video/*" required><span class="upload-icon" aria-hidden="true"></span><strong>Choose a video</strong><small>Video is uploaded for review.</small></label>
+        <label class="field-label" for="captured-at">Capture time <span>optional</span></label>
+        <input id="captured-at" name="captured_at" type="text" inputmode="text" placeholder="2026-09-15T19:00:00-07:00" autocomplete="off">
+        <label class="field-label" for="timezone">Time zone <span>optional</span></label>
+        <input id="timezone" name="timezone" type="text" placeholder="e.g. America/Los_Angeles" autocomplete="off">
+        <button class="button primary full" type="submit" id="upload-submit">Upload and analyze</button>
+        <p class="form-note" id="capture-note">Leave capture time blank when it is unknown.</p>
+      </form>
+      <div class="video-list" id="video-list" aria-live="polite"></div>
+    </aside>
+
+    <section class="review-stage" aria-label="Evidence review">
+      <div class="storage-banner" id="storage-banner" hidden><span class="banner-icon" aria-hidden="true"></span><p id="storage-copy"></p></div>
+      <div class="empty-stage" id="empty-stage"><div class="empty-mark" aria-hidden="true">V</div><h2>Start with a video</h2><p>Upload a recording to create a reviewable source, analysis job, and evidence timeline.</p></div>
+      <div class="detail-stage" id="detail-stage" hidden>
+        <div class="detail-head"><div><p class="filename" id="video-name"></p><p class="video-meta" id="video-meta"></p></div><div class="detail-actions"><button class="button secondary" id="reanalyze-button" type="button">Reanalyze</button><button class="button danger ghost" id="cancel-button" type="button" hidden>Cancel analysis</button></div></div>
+        <section class="job-panel" id="job-panel" hidden aria-live="polite"><div class="job-copy"><strong id="job-title">Analysis queued</strong><span id="job-stage"></span></div><div class="progress-track"><div id="job-progress" class="progress-bar"></div></div><span id="job-percent" class="progress-percent"></span><p class="job-error" id="job-error" hidden></p></section>
+        <div class="video-frame">
+          <video id="source-video" controls preload="metadata" playsinline></video>
+          <div id="video-unavailable" class="video-unavailable" hidden><p>Source video is unavailable.</p><span id="video-unavailable-detail"></span></div>
+        </div>
+        <section class="timeline-section" aria-labelledby="timeline-heading"><div class="section-heading"><div><h2 id="timeline-heading">Event timeline</h2><p id="timeline-hint">Candidate events appear here after analysis.</p></div><span id="timeline-duration" class="duration-label"></span></div><div id="timeline" class="timeline" role="list" aria-label="Event timeline"></div></section>
+        <section class="event-section" aria-labelledby="events-heading"><div class="section-heading"><div><h2 id="events-heading">Candidate events</h2><p>Review each candidate against the source and its evidence clip.</p></div></div><div id="event-list" class="event-list" aria-live="polite"></div></section>
+      </div>
+    </section>
+
+    <aside class="context-rail" aria-label="Scene context and notifications">
+      <section class="context-card" id="scene-card"><div class="card-heading"><div><h2>Scene context</h2><p id="scene-status">Select a video to annotate its scene.</p></div><span id="scene-badge" class="badge muted">No video</span></div><div class="scene-empty" id="scene-empty">Scene context is advisory. It does not establish that a boundary was crossed.</div><div id="scene-editor" hidden>
+        <div class="annotator"><img id="scene-frame" src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='9'%3E%3Crect width='16' height='9' fill='%23171a18'/%3E%3C/svg%3E" alt="Representative video frame for drawing scene regions"><svg id="scene-svg" viewBox="0 0 1000 562.5" preserveAspectRatio="none" aria-label="Scene region editor"></svg><div id="scene-handles" class="scene-handles"></div></div>
+        <div class="scene-toolbar"><button id="suggest-scene" class="button secondary" type="button">Suggest regions</button><button id="new-region" class="button secondary" type="button">Add region</button><button id="redraw-region" class="button secondary" type="button" disabled>Redraw</button></div>
+        <div id="scene-suggestion-message" class="inline-message" hidden></div>
+        <div id="region-list" class="region-list"></div>
+        <fieldset class="schedule-fields"><legend>Schedule <span>optional</span></legend><p id="schedule-guidance">A schedule is optional and is never inferred.</p><label><input id="schedule-enable" type="checkbox"> Add a schedule</label><div id="schedule-inputs" class="schedule-inputs" hidden><label>Start<input id="schedule-start" type="time"></label><label>End<input id="schedule-end" type="time"></label><label>Time zone<input id="schedule-timezone" type="text" placeholder="America/Los_Angeles"></label></div></fieldset>
+        <button id="save-scene" class="button primary full" type="button">Approve scene context</button>
+      </div></section>
+      <section class="context-card outbox-card"><div class="card-heading"><div><h2>Notification outbox</h2><p>Items wait here until an integration is connected.</p></div></div><div id="outbox-list" class="outbox-list"><p class="quiet">Checking outbox…</p></div></section>
+    </aside>
+  </main>
+  <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+  <script src="{{ url_for('static', filename='review.js') }}" defer></script>
+</body>
+</html>

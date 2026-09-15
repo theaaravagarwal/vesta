@@ -1,0 +1,19 @@
+[Unit]
+Description=Vesta local vision inference (dedicated Ollama instance)
+After=network.target
+
+[Service]
+Type=simple
+Environment=OLLAMA_HOST=127.0.0.1:8078
+Environment=OLLAMA_MODELS=%h/vesta/models/ollama
+Environment=OLLAMA_NUM_PARALLEL=1
+Environment=OLLAMA_MAX_LOADED_MODELS=1
+Environment=OLLAMA_CONTEXT_LENGTH=32768
+ExecStart=/home/software/Documents/.aa/ablit/runtime-ollama-0.33.2/bin/ollama serve
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

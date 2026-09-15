@@ -22,9 +22,10 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 import cv2
 import numpy as np
 import torch
-from flask import Flask, Response, jsonify, render_template, request as flask_request, send_from_directory
+from flask import Flask, Response, jsonify, redirect, render_template, request as flask_request, send_from_directory
 from PIL import Image
 from ultralytics import YOLO
+from behavior import BehaviorWorker, Store, behavior_blueprint
 
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -41,12 +42,9 @@ ONNX_MODEL_PATH = PERSON_DIR / "yolo26s.onnx"
 
 LLAMACPP_BASE_URL = os.getenv("LLAMACPP_BASE_URL", "http://127.0.0.1:8078")
 LLAMACPP_MODEL = os.getenv("LLAMACPP_MODEL", "local-model")
-LIVE_RTSP_DEFAULT = os.getenv(
-    "LIVE_RTSP_URL",
-    "rtsp://user:robotics3800@172.16.100.188:554/cam/realmonitor?channel=1&subtype=1",
-)
-LIVE_RTSP_DISCOVER_USER = os.getenv("LIVE_RTSP_DISCOVER_USER", "user")
-LIVE_RTSP_DISCOVER_PASSWORD = os.getenv("LIVE_RTSP_DISCOVER_PASSWORD", "robotics3800")
+LIVE_RTSP_DEFAULT = os.getenv("LIVE_RTSP_URL", "")
+LIVE_RTSP_DISCOVER_USER = os.getenv("LIVE_RTSP_DISCOVER_USER", "")
+LIVE_RTSP_DISCOVER_PASSWORD = os.getenv("LIVE_RTSP_DISCOVER_PASSWORD", "")
 LIVE_DETECT_CONF = min(0.99, max(0.01, float(os.getenv("LIVE_DETECT_CONF", "0.5"))))
 LIVE_DISCOVERY_PROBE_TIMEOUT_S = max(2, int(os.getenv("LIVE_DISCOVERY_PROBE_TIMEOUT_S", "5")))
 LIVE_DISCOVERY_MAX_CANDIDATES = max(1, int(os.getenv("LIVE_DISCOVERY_MAX_CANDIDATES", "24")))
@@ -70,8 +68,7 @@ AUTONOMOUS_MAX_CLIP_S = max(5.0, float(os.getenv("AUTONOMOUS_MAX_CLIP_S", "180.0
 
 CAMERA_CONTEXT = os.getenv(
     "CAMERA_CONTEXT",
-    "This camera covers the back area of a school. The expected baseline is a small number of staff (custodial / maintenance / coaches) walking through calmly. "
-    "Students gathering, fighting, hitting each other, brandishing sticks or objects, sneaking in or out, vandalizing, or any kind of physical altercation are all serious safety incidents and must score high.",
+    "This camera covers an outdoor area. Describe only observable activity and state uncertainty when the available evidence is insufficient.",
 )
 RECORDING_ANALYSIS_GRID_N = max(2, int(os.getenv("RECORDING_ANALYSIS_GRID_N", "4")))
 RECORDING_ANALYSIS_CELL_PX = max(192, int(os.getenv("RECORDING_ANALYSIS_CELL_PX", "384")))
@@ -80,7 +77,7 @@ RECORDING_ANALYSIS_FRAMES = max(4, int(os.getenv("RECORDING_ANALYSIS_FRAMES", "1
 RECORDING_ANALYSIS_SAMPLE_POOL = max(60, int(os.getenv("RECORDING_ANALYSIS_SAMPLE_POOL", "400")))
 AUTONOMOUS_PROMPT = os.getenv(
     "AUTONOMOUS_PROMPT",
-    "Analyze this surveillance clip for suspicious activity or potential threats (theft, arson, vandalism, trespassing, assault, weapons).",
+    "Describe observable activity in this video chronologically. Do not infer identity, intent, guilt, or risk from appearance; state uncertainty where appropriate.",
 )
 AUTONOMOUS_MAX_EVENTS = max(20, int(os.getenv("AUTONOMOUS_MAX_EVENTS", "200")))
 os.environ.setdefault(
@@ -362,28 +359,11 @@ def auto_analyze_recording(name: str) -> dict[str, object]:
     images = [Image.fromarray(f) for f in picked]
     n = len(images)
 
-    system_prompt = (
-        f"You are a vigilant video security analyst examining {n} still frames sampled from a single short surveillance clip, in chronological order. "
-        f"CAMERA CONTEXT: {CAMERA_CONTEXT} "
-        "READ THESE HARD RULES CAREFULLY AND APPLY THEM:\n"
-        "RULE A — POSTURE CHANGE = ASSAULT. If across the frames you see one person change from upright to bent-over / crouched / on the ground while a SECOND person is close by or standing over them, that is an ASSAULT in progress. Do NOT explain it as 'picking something up' or 'stretching'. Score >= 75 and name 'physical assault' in the assessment. This is the most important rule.\n"
-        "RULE B — PROXIMITY = FIGHT. If two unauthorized people are within arm's reach of each other for any frame, treat it as physical contact / fight. Score >= 60.\n"
-        "RULE C — HELD OBJECT = WEAPON. Any rigid object held by a person (stick, pole, bat, pipe, rod, board, broom handle, bottle, brick, knife, gun) is a weapon. Even one frame is enough. Score >= 75 and name the object.\n"
-        "RULE D — RUNNING AWAY = AFTERMATH. If a person sprints out of frame after being near another person, treat as aftermath of a confrontation. Score >= 60.\n"
-        "RULE E — UNAUTHORIZED PRESENCE BASELINE. Two non-staff people present in this back-of-school area is already 30+. Add 30 if rule A/B/C/D fires.\n"
-        "BAN: do NOT use the words 'no clear evidence', 'no clear physical', 'no signs of', 'appears to', 'possibly', 'might be' in the assessment when ANY of the above rules fire — those phrases lower the perceived threat unfairly.\n"
-        "Output ONLY strict JSON: "
-        '{"summary": "one short sentence on what happens", "threat_score": integer 0-100, "assessment": "one short sentence naming the indicator and the rule"}.\n'
-        "Scoring scale:\n"
-        "0-20: a single authorized staff person walking calmly with no contact.\n"
-        "21-50: unauthorized presence, no contact.\n"
-        "51-75: physical contact, grabbing, shoving, weapon visible.\n"
-        "76-100: confirmed fight / hit / kick / swing / person knocked down / weapon used against another person.\n"
-        "Be DECISIVE. Under-scoring a real altercation is failure."
-    )
+    system_prompt = (f"Review {n} chronological still frames from one video. {CAMERA_CONTEXT} "
+                     "Describe only what the frames support. Do not infer identity, intent, guilt, danger, or clothing-based traits. "
+                     "Output strict JSON with summary, threat_score, and assessment; use uncertainty when evidence is incomplete.")
     user_prompt = (
-        f"You are looking at {n} chronological frames. Identify each person and their posture in every frame. "
-        "Apply rules A through E. If posture changes (upright -> bent / ground) while another person is near, that is rule A and you score >= 75. "
+        f"You are looking at {n} chronological frames. Describe visible activity and any limits of the evidence. "
         "Return strict JSON only."
     )
     raw = query_llamacpp_with_images(images, user_prompt, max_tokens=400, system_prompt=system_prompt, temperature=0.0)
@@ -1947,8 +1927,7 @@ def summarize_mosaic_answers(first_mosaic: Image.Image | None, mosaic_answers: s
 
     system_prompt = (
         "You are a cautious surveillance analyst summarizing per-mosaic findings from a video. "
-        "Prioritize potential public-safety and property-crime signals, including theft, arson, "
-        "vandalism, trespassing, assault, and weapon-like behavior. "
+        "Describe observable activity without inferring intent, identity, guilt, or danger. "
         "The provided image is only the first temporal mosaic and may miss information "
         "that appears in the mosaic answers. Prefer the full mosaic answers when conflicts appear. "
         "If confidence is low, state uncertainty briefly instead of inventing details."
@@ -1958,7 +1937,7 @@ def summarize_mosaic_answers(first_mosaic: Image.Image | None, mosaic_answers: s
         "1) the first mosaic image\n"
         "2) the mosaic answers text below\n\n"
         f"Mosaic answers:\n{mosaic_answers}\n\n"
-        "Focus on suspicious behavior and threat-relevant context when present. "
+        "State uncertainty where the evidence does not support a firm conclusion. "
         "Return only one short paragraph."
     )
     return query_llamacpp(first_mosaic, user_prompt, max_tokens=384, system_prompt=system_prompt)
@@ -2027,14 +2006,13 @@ def generate_threat_assessment(
         f"- First mosaic understanding: {first_caption or 'N/A'}\n"
         f"- Second mosaic understanding: {second_caption or 'N/A'}\n"
         f"- Final video understanding: {final_summary or 'N/A'}\n\n"
-        "Explicitly check for indicators of theft/shoplifting, arson/fire-setting, vandalism/property damage, "
-        "trespassing, assault, and weapon-related threats.\n"
+        "Describe only what is visibly supported; do not infer intent, guilt, or danger from ambiguous activity.\n"
         "Scoring guide:\n"
         "- 0 to 20: clearly benign routine activity\n"
-        "- 21 to 50: suspicious behavior or possible pre-incident indicators\n"
-        "- 51 to 80: likely criminal or dangerous behavior (e.g., theft, vandalism, attempted arson)\n"
-        "- 81 to 100: active high-risk threat (e.g., confirmed arson attempt, violent assault, weapon threat)\n\n"
-        "When uncertain between two ranges, choose the higher range if suspicious indicators are present.\n"
+        "- 21 to 50: unclear activity requiring human review\n"
+        "- 51 to 80: clearly observable concerning action\n"
+        "- 81 to 100: directly observable imminent harm\n\n"
+        "When uncertain, choose the lower range and explain the uncertainty.\n"
         "Return strict JSON only."
     )
     raw = query_llamacpp_with_images(
@@ -2085,8 +2063,7 @@ def run_video_understanding(
 
     user_prompt = (
         prompt.strip()
-        or "Analyze this surveillance video for suspicious activity and potential threats, "
-        "including theft, arson, vandalism, trespassing, assault, and weapon-related behavior."
+        or "Describe observable activity in this surveillance video chronologically and state uncertainty where needed."
     )
     max_workers = max(1, int(llm_max_batch_requests))
     responses: list[str] = [""] * len(mosaics)
@@ -2099,7 +2076,7 @@ def run_video_understanding(
             f"{user_prompt}\n\n"
             f"You are viewing temporal mosaic {idx} of {
                 total_mosaics} from one video. "
-            "Prioritize suspicious actions, threat indicators, and victim/property risk. "
+            "Describe observable actions without inferring identity, intent, guilt, or risk. "
             "Return only one short sentence. Do not include reasoning."
         )
         try:
@@ -2285,6 +2262,11 @@ def render_page(**overrides: object):
 
 @app.get("/")
 def index():
+    return redirect("/review")
+
+
+@app.get("/legacy")
+def legacy_index():
     try:
         get_model()
     except Exception:
@@ -2730,5 +2712,21 @@ def files(filename: str):
     return send_from_directory(RUNTIME_DIR, filename)
 
 
+# The upload review service has no camera dependencies.  Keep it mounted on the
+# legacy process for local compatibility; production may instead use
+# ``behavior:create_app`` as its standalone WSGI entrypoint.
+if os.getenv("VESTA_DISABLE_BEHAVIOR_WORKER") != "1":
+    _behavior_store = Store(RUNTIME_DIR / "behavior")
+    _behavior_worker = BehaviorWorker(_behavior_store)
+    app.register_blueprint(behavior_blueprint(_behavior_store, _behavior_worker))
+    _behavior_worker.start()
+
+
+@app.get("/review")
+def review_page():
+    return render_template("review.html")
+
+
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8000, debug=False)
+    app.run(host=os.getenv("VESTA_BIND_HOST", "127.0.0.1"), port=8000, debug=False)

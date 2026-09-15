@@ -5,6 +5,7 @@ description = "Unified Flask UI for person detection and temporal-mosaic video u
 requires-python = ">=3.12"
 dependencies = [
     "flask>=3.1.0",
+    "lap==0.5.13",
     "numpy>=2.4.3",
     "onnx>=1.20.1",
     "onnxruntime>=1.24.4",
@@ -13,4 +14,9 @@ dependencies = [
     "pillow>=11.3.0",
     "torch>=2.10.0",
     "ultralytics>=8.4.23",
+]
+
+[project.optional-dependencies]
+host = [
+    "gunicorn==23.0.0",
 ]

@@ -1,9 +1,5 @@
 #!/usr/bin/env bash
 set -euo pipefail
-
-PORT=33263
-
-echo "Starting unified UI on port ${PORT}"
-echo "Open: http://127.0.0.1:${PORT}"
-
-uv run flask --app main:app run --host 0.0.0.0 --port "${PORT}"
+PORT="${PORT:-33263}"
+echo "Starting Vesta review at http://127.0.0.1:${PORT}/review"
+exec uv run --frozen --extra host gunicorn --bind "127.0.0.1:${PORT}" --workers 1 --threads 8 --timeout 360 'behavior:create_app()'

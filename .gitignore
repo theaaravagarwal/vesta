@@ -1,6 +1,15 @@
 __pycache__/
 *.pyc
 .venv/
+.env
+.env.*
+!.env.example
+runtime/
+models/
+datasets/
+runs/
+.tools/
+.venv-*/
 uploads/
 outputs/
 cache/
@@ -16,3 +25,7 @@ cache/
 *.avi
 *.mkv
 *.webm
+
+# Local verification artifacts
+output/
+.playwright-cli/

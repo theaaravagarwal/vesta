@@ -1,0 +1,17 @@
+[Unit]
+Description=Vesta behavior review web application
+After=network-online.target vesta-inference.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/vesta
+EnvironmentFile=%h/.config/vesta/host.env
+Environment=PATH=%h/vesta/.tools/bin:%h/vesta/.venv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/vesta/.venv/bin/gunicorn --bind 127.0.0.1:33263 --workers 1 --threads 8 --timeout 360 "behavior:create_app()"
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
