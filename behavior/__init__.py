@@ -48,7 +48,7 @@ def config_version() -> str:
     """Provenance tag written onto every event produced by this process."""
     policy = "temporal-v3-actions" if EVENT_POLICY == "observable-v3" else "temporal-v3-bounded"
     gap = f"-gap{MERGE_GAP_S:g}" if MERGE_GAP_S else ""
-    return policy + ("-focus" if FOCUS_VIEW else "") + gap + "-evidence1"
+    return policy + ("-focus" if FOCUS_VIEW else "") + gap + "-evidence2"
 
 
 CONFIG_VERSION = config_version()
@@ -945,24 +945,30 @@ def _starts(duration):
 
 
 def _has_non_routine_evidence(event: dict) -> bool:
-    """Reject generic vehicle-presence alerts without a described physical change.
+    """Require an observable action, not a model label for ordinary presence.
 
-    The model sometimes emits candidate labels for people merely near a car or
-    opening a door. A clearly described forceful action remains reviewable.
-    This narrow guard does not reinterpret climbing or other boundary actions.
+    This is a conservative alert gate, not a classifier. It cannot establish
+    intent or recover a missed action; novel actions need human review and an
+    explicit evidence rule before they are allowed to create notifications.
     """
-    if event["action"] not in {"access_interaction", "other_observable_event"}:
+    action = event["action"]
+    words = " ".join([event["description"], *event["evidence"]]).lower()
+    force = r"\b(?:pry|pries|pried|prying|break|breaking|broke|smash\w*|damag\w*|strik\w*|struck|forc\w*|cut\w*|shatter\w*)\b"
+    if action == "climbing":
         return True
-    words = " ".join(
-        [event["description"], *event["evidence"], event["uncertainty"]]
-    ).lower()
-    if not re.search(r"\b(?:car|cars|vehicle|vehicles|van|vans|truck|trucks)\b", words):
-        return True
-    forceful = (
-        "pry", "pries", "pried", "break", "broke", "smash", "damage", "strike",
-        "forced", "forceful", "cut", "shatter", "repeated pull", "repeatedly pull",
-    )
-    return any(word in words for word in forceful)
+    if action == "boundary_entry":
+        barrier = re.search(r"\b(?:fence|wall|barrier|window|gate)\b", words)
+        crossing = re.search(r"\b(?:cross\w*|climb\w*|vault\w*|crawl\w*|squeez\w*|(?:pass\w*|enter\w*) (?:over|through))\b", words)
+        return bool(barrier and crossing)
+    if action == "access_interaction":
+        access = re.search(r"\b(?:door|window|gate|lock|fence|vehicle|car|van|truck)\b", words)
+        repeated = re.search(r"\b(?:repeated\w*|multiple|several)\b.{0,35}\b(?:pull\w*|push\w*|attempt\w*|try|tries|tried|trying)\b", words)
+        return bool(access and (re.search(force, words) or repeated))
+    if action == "object_tampering":
+        return bool(re.search(force, words))
+    if action == "other_observable_event":
+        return bool(re.search(r"\b(?:fell|fall\w*|collaps\w*|punch\w*|kick\w*|fight\w*|struck|drag\w*)\b", words))
+    return False
 
 
 def _merge(events, gap=None):

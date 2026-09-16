@@ -20,13 +20,22 @@ used different recorded prompt/config versions, so their scores are not a clean
 model-only comparison. The optional context/detail focus experiment previously
 increased alerts without recovering an exact climbing hit; it is not promoted.
 
-The current evidence gate rejects `access_interaction` and
-`other_observable_event` candidates about a vehicle when no forceful physical
-action is described. It leaves other action classes, including `climbing`,
-unchanged. Applied to **saved historical predictions**, it removes four alerts
-from the two ordinary UCA controls (`uca-05`, `uca-06`) and one generic Mobius
-alert while retaining both Mobius `climbing` alerts. This is a deterministic
-offline comparison; it does not establish a new full-replay detection score.
+An initial vehicle-specific evidence gate removed four alerts in the two
+ordinary UCA controls. A **live replay of `uca-05`** under the newer baseline
+prompt still produced nine ordinary-activity alerts: standing by a motorcycle,
+walking, entering the camera frame, and holding a box were mislabeled as
+incidents. The gate was therefore broadened to require visible action evidence
+matching each label: a barrier crossing for `boundary_entry`, force or repeated
+attempts at an access point for `access_interaction`, concrete damage/force for
+`object_tampering`, and a fall or physical conflict for
+`other_observable_event`. `climbing` remains unchanged.
+
+Applied to **saved predictions**, this version removes all four ordinary UCA
+alerts and all nine alerts from the `uca-05` live replay, while retaining both
+Mobius `climbing` alerts. It also removes the generic non-climbing Mobius alerts
+and the wrongly named UCA access-interaction candidates. These are offline
+post-processing comparisons; a fresh full replay is needed to measure the
+deployed end-to-end behavior and false-negative tradeoff.
 
 Before camera integration, use a small held-out set with frame-accurate visible
 action labels and ordinary controls from the intended camera geometry. Record

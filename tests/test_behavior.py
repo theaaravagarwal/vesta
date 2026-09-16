@@ -408,15 +408,15 @@ class BehaviorTests(unittest.TestCase):
     def test_merge_gap_is_recorded_in_the_config_version(self):
         self.assertNotIn("gap", config_version())
         with patch.object(behavior, "MERGE_GAP_S", 1.0):
-            self.assertEqual(config_version(), "temporal-v3-bounded-gap1-evidence1")
+            self.assertEqual(config_version(), "temporal-v3-bounded-gap1-evidence2")
 
     def test_focus_view_is_selectable_without_the_experimental_policy(self):
         self.assertEqual(behavior.EVENT_POLICY, "baseline")
-        self.assertEqual(config_version(), "temporal-v3-bounded-evidence1")
+        self.assertEqual(config_version(), "temporal-v3-bounded-evidence2")
         with patch.object(behavior, "FOCUS_VIEW", True):
-            self.assertEqual(config_version(), "temporal-v3-bounded-focus-evidence1")
+            self.assertEqual(config_version(), "temporal-v3-bounded-focus-evidence2")
             reported = self.client.get("/api/system").get_json()
-        self.assertEqual(reported["config_version"], "temporal-v3-bounded-focus-evidence1")
+        self.assertEqual(reported["config_version"], "temporal-v3-bounded-focus-evidence2")
 
     def test_vehicle_presence_is_not_an_alert_without_forceful_evidence(self):
         event = {
@@ -430,6 +430,23 @@ class BehaviorTests(unittest.TestCase):
         self.assertTrue(_has_non_routine_evidence(event))
         event["action"] = "climbing"
         event["evidence"] = ["The person climbs a fence beside a car."]
+        self.assertTrue(_has_non_routine_evidence(event))
+        event["action"] = "other_observable_event"
+        event["evidence"] = ["A person falls beside the car."]
+        self.assertTrue(_has_non_routine_evidence(event))
+
+    def test_action_labels_need_matching_physical_evidence(self):
+        event = {
+            "action": "boundary_entry", "description": "A person enters the scene",
+            "evidence": ["A person walks into the frame"], "uncertainty": "",
+        }
+        self.assertFalse(_has_non_routine_evidence(event))
+        event["evidence"] = ["The person climbs over the fence."]
+        self.assertTrue(_has_non_routine_evidence(event))
+        event["action"] = "object_tampering"
+        event["evidence"] = ["A person stands beside a motorcycle."]
+        self.assertFalse(_has_non_routine_evidence(event))
+        event["evidence"] = ["The person cuts a chain on the motorcycle."]
         self.assertTrue(_has_non_routine_evidence(event))
 
     def test_focus_frames_reach_inference_and_are_explained_to_the_model(self):
