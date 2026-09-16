@@ -1,5 +1,10 @@
 # Clip-level diagnosis, 2026-09-16
 
+The fence clips diagnose one failure mode of the current test camera. They do
+not define the product's general event scope; most planned cameras are expected
+to view relevant activity within roughly 50 ft, subject to camera placement
+and image quality.
+
 This note compares the **actual 2 fps JPEG frames supplied to the model**, not
 just the source videos. It is a small diagnostic sample, not a campus accuracy
 estimate.

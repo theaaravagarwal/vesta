@@ -7,6 +7,12 @@ It is an uploaded-video demo, separate from the original camera process. SQLite
 persists jobs, events, scene edits, review corrections and the notification outbox.
 The worker normalizes media, tracks people, and analyzes every overlapping temporal
 window using structured candidate-event output. Failed analysis remains explicit.
+The review page can record a short webcam clip in the browser and upload it for
+the same offline analysis; this is not continuous camera monitoring. The current
+evidence gate is conservative: it suppresses generic presence/motion candidates
+and currently has only a two-clip live smoke result (ordinary UCA: zero alerts;
+clear Mobius: two climbing alerts). Broader surveillance behavior coverage and
+camera-viewpoint reliability are not established.
 
 The event prompt policy (`BEHAVIOR_EVENT_POLICY`), the spatial focus view
 (`BEHAVIOR_FOCUS_VIEW`) and the event merge gap (`BEHAVIOR_MERGE_GAP_S`) are

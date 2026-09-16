@@ -10,9 +10,9 @@ Remove credential defaults, validate configuration at startup, avoid exposing se
 
 ## 2. Observable events, uncertainty, and reviewed single-camera trial
 
-Replace subjective intent/crime labels with observable events (for example, person enters area, running, contact-like motion, object carried), with evidence timestamps, confidence/uncertainty, and an explicit human-review state. Use a small, consented, single-camera dataset; reviewers independently label event intervals and benign confounders. Run in shadow mode and retain reviewer corrections.
+Replace subjective intent/crime labels with observable events and camera-specific policies, with evidence timestamps, uncertainty, and an explicit human-review state. Evaluate access-point interaction, object damage, unusual boundary crossing where a boundary exists, and physical incidents alongside ordinary activity. Presence, running, carrying an object, or entering the frame alone are not universal alerts. The current fence camera is one diagnostic scene; most planned views are expected to cover relevant activity within roughly 50 ft. That distance does not substitute for measured subject size, lighting, occlusion, and camera angle. Use public clips and, when available, a small consented sample from the intended viewpoint; reviewers independently label visible event intervals and benign confounders. Run in shadow mode and retain reviewer corrections.
 
-**Acceptance:** pre-registered event definitions and review protocol; held-out clips; per-event precision/recall and false alerts per camera-hour with uncertainty intervals; detector miss audit; documented review burden and thresholds approved before any pilot alerting. Thresholds must reflect the intended use and be set before inspecting held-out results.
+**Acceptance:** pre-registered, scene-relevant event definitions and review protocol; held-out clips including non-fence scenes; per-event precision/recall and false alerts per camera-hour with uncertainty intervals; detector miss audit; documented review burden and thresholds approved before any pilot alerting. Report results by camera viewpoint and subject pixel size as well as by action. Thresholds must reflect the intended use and be set before inspecting held-out results.
 
 ## 3. Bounded 4–8 camera pilot and durable processing
 
