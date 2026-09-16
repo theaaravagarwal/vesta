@@ -13,6 +13,13 @@ evidence gate is conservative: it suppresses generic presence/motion candidates
 and currently has only a two-clip live smoke result (ordinary UCA: zero alerts;
 clear Mobius: two climbing alerts). Broader surveillance behavior coverage and
 camera-viewpoint reliability are not established.
+Analysis jobs now retain private per-window and per-candidate diagnostics in
+SQLite, including evidence-gate rejection reasons. A deployed replay of the
+ordinary `uca-05` clip completed with zero public alerts; its private trace
+recorded five windows, two with no model candidates, and six rejected model
+candidates. This explains the gate's behavior for that clip without claiming
+general accuracy. See [evaluation tooling](../../evaluation/README.md) for the
+local export command.
 
 The event prompt policy (`BEHAVIOR_EVENT_POLICY`), the spatial focus view
 (`BEHAVIOR_FOCUS_VIEW`) and the event merge gap (`BEHAVIOR_MERGE_GAP_S`) are
