@@ -12,6 +12,7 @@ from behavior import (
     Store,
     TemporalAnalyzer,
     _merge,
+    _has_non_routine_evidence,
     _starts,
     _valid_scene,
     config_version,
@@ -407,15 +408,29 @@ class BehaviorTests(unittest.TestCase):
     def test_merge_gap_is_recorded_in_the_config_version(self):
         self.assertNotIn("gap", config_version())
         with patch.object(behavior, "MERGE_GAP_S", 1.0):
-            self.assertEqual(config_version(), "temporal-v3-bounded-gap1")
+            self.assertEqual(config_version(), "temporal-v3-bounded-gap1-evidence1")
 
     def test_focus_view_is_selectable_without_the_experimental_policy(self):
         self.assertEqual(behavior.EVENT_POLICY, "baseline")
-        self.assertEqual(config_version(), "temporal-v3-bounded")
+        self.assertEqual(config_version(), "temporal-v3-bounded-evidence1")
         with patch.object(behavior, "FOCUS_VIEW", True):
-            self.assertEqual(config_version(), "temporal-v3-bounded-focus")
+            self.assertEqual(config_version(), "temporal-v3-bounded-focus-evidence1")
             reported = self.client.get("/api/system").get_json()
-        self.assertEqual(reported["config_version"], "temporal-v3-bounded-focus")
+        self.assertEqual(reported["config_version"], "temporal-v3-bounded-focus-evidence1")
+
+    def test_vehicle_presence_is_not_an_alert_without_forceful_evidence(self):
+        event = {
+            "action": "access_interaction",
+            "description": "A person is near a car, possibly opening a door.",
+            "evidence": ["A person stands beside the car."],
+            "uncertainty": "The interaction is unclear.",
+        }
+        self.assertFalse(_has_non_routine_evidence(event))
+        event["evidence"] = ["The person pries the car door with a tool."]
+        self.assertTrue(_has_non_routine_evidence(event))
+        event["action"] = "climbing"
+        event["evidence"] = ["The person climbs a fence beside a car."]
+        self.assertTrue(_has_non_routine_evidence(event))
 
     def test_focus_frames_reach_inference_and_are_explained_to_the_model(self):
         source = self.store.media / "v.mp4"

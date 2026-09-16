@@ -16,6 +16,7 @@ import threading
 import time
 import uuid
 import math
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -47,7 +48,7 @@ def config_version() -> str:
     """Provenance tag written onto every event produced by this process."""
     policy = "temporal-v3-actions" if EVENT_POLICY == "observable-v3" else "temporal-v3-bounded"
     gap = f"-gap{MERGE_GAP_S:g}" if MERGE_GAP_S else ""
-    return policy + ("-focus" if FOCUS_VIEW else "") + gap
+    return policy + ("-focus" if FOCUS_VIEW else "") + gap + "-evidence1"
 
 
 CONFIG_VERSION = config_version()
@@ -840,6 +841,8 @@ class BehaviorWorker:
                     "other_observable_event",
                 }:
                     raise RuntimeError("model returned an invalid action tag")
+                if not _has_non_routine_evidence(x):
+                    continue
                 # Tracks provide optional temporal context.  They do not establish
                 # involvement, so only overlapping IDs are listed and descriptions
                 # must remain grounded in the VLM's observable evidence.
@@ -939,6 +942,27 @@ def _starts(duration):
             break
         x += STRIDE_S
     return out
+
+
+def _has_non_routine_evidence(event: dict) -> bool:
+    """Reject generic vehicle-presence alerts without a described physical change.
+
+    The model sometimes emits candidate labels for people merely near a car or
+    opening a door. A clearly described forceful action remains reviewable.
+    This narrow guard does not reinterpret climbing or other boundary actions.
+    """
+    if event["action"] not in {"access_interaction", "other_observable_event"}:
+        return True
+    words = " ".join(
+        [event["description"], *event["evidence"], event["uncertainty"]]
+    ).lower()
+    if not re.search(r"\b(?:car|cars|vehicle|vehicles|van|vans|truck|trucks)\b", words):
+        return True
+    forceful = (
+        "pry", "pries", "pried", "break", "broke", "smash", "damage", "strike",
+        "forced", "forceful", "cut", "shatter", "repeated pull", "repeatedly pull",
+    )
+    return any(word in words for word in forceful)
 
 
 def _merge(events, gap=None):

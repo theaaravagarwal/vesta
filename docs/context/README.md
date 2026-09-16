@@ -24,3 +24,4 @@ Frigate is a reference for event review, recording retention, and detection work
   each scored run has a generated record in [benchmarks/](benchmarks/)
 
 - [Broader dataset survey and Mobius sample test](dataset-survey.md)
+- [Mobius versus distant-surveillance clip diagnosis](clip-diagnosis.md)
