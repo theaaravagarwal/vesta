@@ -25,6 +25,17 @@ processing wall times. An opt-in paired full-scene/detail-view probe supports
 bounded experiments without changing production defaults. See
 [evaluation tooling](../../evaluation/README.md).
 
+The post-deployment ordinary replay failed on its first window. The export
+correctly reports an error/partial trace with 16 sampled frames and model/config
+provenance, not a completed zero-candidate result. The corresponding inference
+log contains `Unexpected empty grammar stack`; this is an observed serving
+failure, not evidence that the ordinary scene was correctly classified. A separate
+replay after restarting only `vesta-inference` completed in 44.202 seconds with
+zero alerts, five completed windows and eleven rejected candidates; all windows
+carry model/config provenance. Recovery was observed once; the underlying serving
+failure is not fixed. Both outcomes remain in ignored host artifacts under
+`runtime/experiment-baseline-20260916T2316Z/post-*.json`.
+
 The delivery target remains a camera network, with a one-camera demo first and
 roughly 50-foot maximum subject distance anticipated by the user. Camera count,
 image detail, lighting and stream resolution still need deployment measurements.
