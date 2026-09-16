@@ -1,10 +1,14 @@
+import json
 import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 from evaluation.metrics import match_events, score, validate_manifest
+from evaluation.record_run import build, clip_summary
 
 
 class MetricsTests(unittest.TestCase):
@@ -108,6 +112,89 @@ class MetricsTests(unittest.TestCase):
         self.assertEqual(r["recall"], 1)
         self.assertEqual(r["precision"], 1)
         self.assertEqual(r["mean_start_error_s"], 0)
+
+
+class RecordRunTests(unittest.TestCase):
+    """Benchmark records are generated from artifacts, never hand-copied."""
+
+    def setUp(self):
+        self.temp = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.temp, True)
+        self.manifest = self.temp / "manifest.json"
+        self.manifest.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "clips": [
+                        {
+                            "id": "a",
+                            "source_url": "https://example.test/a",
+                            "license": "CC-BY-4.0",
+                            "session_group": "day1",
+                            "split": "development",
+                            "path": "a.mp4",
+                            "duration_s": 60,
+                            "label_status": "reviewed",
+                            "events": [
+                                {"action": "climbing", "start_s": 10, "end_s": 20}
+                            ],
+                        },
+                        {
+                            "id": "b",
+                            "source_url": "https://example.test/b",
+                            "license": "CC-BY-4.0",
+                            "session_group": "day2",
+                            "split": "development",
+                            "path": "b.mp4",
+                            "duration_s": 30,
+                            "label_status": "reviewed",
+                            "events": [],
+                        },
+                    ],
+                }
+            )
+        )
+
+    def predictions(self, name, events):
+        path = self.temp / name
+        path.write_text(
+            json.dumps(
+                {
+                    "run": {"model": "m", "config_version": "temporal-v3-bounded"},
+                    "a": {"status": "done", "events": events, "elapsed_s": 1.5},
+                    "b": {
+                        "status": "error",
+                        "events": [],
+                        "elapsed_s": 0.5,
+                        "job": {"error": "malformed JSON"},
+                    },
+                }
+            )
+        )
+        return path
+
+    def test_record_keeps_failures_visible_and_scores_both_modes(self):
+        path = self.predictions(
+            "p.json", [{"action": "boundary_entry", "start_s": 10, "end_s": 20}]
+        )
+        record = build(
+            self.manifest, {"control": path}, "test purpose", "not promoted", 0.3, None
+        )
+        run = record["runs"]["control"]
+        self.assertEqual(run["run"]["config_version"], "temporal-v3-bounded")
+        self.assertEqual(run["clips"]["b"]["error"], "malformed JSON")
+        self.assertEqual(run["metrics"]["action_aware"]["true_positive"], 0)
+        self.assertEqual(run["metrics"]["action_agnostic"]["true_positive"], 1)
+        self.assertEqual(run["metrics"]["action_aware"]["failed_predictions"], ["b"])
+        self.assertFalse(run["metrics"]["action_aware"]["complete"])
+        self.assertEqual(record["manifest"]["labeled_events"], 1)
+        self.assertIs(record["provenance"]["models"], None)
+        self.assertFalse(record["provenance"]["camera_accessed"])
+
+    def test_clip_summary_excludes_run_metadata(self):
+        path = self.predictions("q.json", [])
+        summary = clip_summary(json.loads(path.read_text()))
+        self.assertEqual(sorted(summary), ["a", "b"])
 
 
 class ExperimentAppTests(unittest.TestCase):
