@@ -66,6 +66,26 @@ action mapping is explicit and exploratory; no user labeling is needed to run it
 Action-agnostic matching evaluates temporal overlap only and explicitly omits
 per-action statistics. It is not a claim that the predicted action was correct.
 
+## Private candidate diagnostics
+
+Each analysis job now records every sampled window, its frame count, model
+candidate count, and inference status in SQLite. Every valid model candidate is
+recorded with its action, evidence, and the evidence-gate decision/reason before
+alerts are merged. A zero-candidate window therefore remains distinguishable
+from a rejected candidate. Traces are kept across reanalysis jobs and removed
+when storage cleanup evicts that video's source. They are not exposed through
+the review API or notification outbox.
+
+On the compute host, export one video's trace to the ignored `runs/` directory:
+
+```bash
+.venv/bin/python evaluation/export_candidates.py VIDEO_ID --output runs/VIDEO_ID-candidates.json
+```
+
+The export may contain descriptions of people and private scene context; keep
+it out of Git. This trace diagnoses model/gate behavior but does not establish
+that an event was visible in a frame. Review the source video for that judgment.
+
 ## Run provenance and variants
 
 `replay.py` reads `GET /api/system` before uploading anything and writes the

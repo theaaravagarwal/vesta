@@ -100,6 +100,9 @@ class Store:
             CREATE TABLE IF NOT EXISTS videos (id TEXT PRIMARY KEY,name TEXT,created_at TEXT,captured_at TEXT,timezone TEXT,duration_s REAL,status TEXT,error TEXT,path TEXT,frame_path TEXT,scene_status TEXT DEFAULT 'empty',scene_approved INTEGER DEFAULT 0,regions TEXT DEFAULT '[]',schedule TEXT,scene_error TEXT,scene_version INTEGER DEFAULT 0);
             CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY,video_id TEXT,type TEXT,status TEXT,progress INTEGER,stage TEXT,error TEXT,created_at TEXT,updated_at TEXT,cancelled INTEGER DEFAULT 0);
             CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY,video_id TEXT,start_s REAL,end_s REAL,action TEXT,description TEXT,evidence TEXT,uncertainty TEXT,track_ids TEXT,review_status TEXT DEFAULT 'unreviewed',pinned INTEGER DEFAULT 0,correction TEXT DEFAULT '',clip_path TEXT,model TEXT,config_version TEXT);
+            CREATE TABLE IF NOT EXISTS analysis_windows (job_id TEXT,video_id TEXT,window_index INTEGER,start_s REAL,end_s REAL,frame_count INTEGER,status TEXT,candidate_count INTEGER DEFAULT 0,PRIMARY KEY(job_id,window_index));
+            CREATE TABLE IF NOT EXISTS candidate_traces (id TEXT PRIMARY KEY,job_id TEXT,video_id TEXT,window_index INTEGER,start_s REAL,end_s REAL,action TEXT,description TEXT,evidence TEXT,uncertainty TEXT,decision TEXT,reason TEXT,model TEXT,config_version TEXT,created_at TEXT);
+            CREATE INDEX IF NOT EXISTS candidate_traces_video_job ON candidate_traces(video_id,job_id,window_index);
             CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY,event_id TEXT UNIQUE,created_at TEXT,status TEXT,action TEXT);
             """)
             # An interrupted process cannot leave a job permanently processing.
@@ -231,6 +234,8 @@ class Store:
                     (r["id"],),
                 )
                 self.run("DELETE FROM events WHERE video_id=?", (r["id"],))
+                self.run("DELETE FROM candidate_traces WHERE video_id=?", (r["id"],))
+                self.run("DELETE FROM analysis_windows WHERE video_id=?", (r["id"],))
                 self.run(
                     "UPDATE videos SET status='evicted',error='Storage cleanup' WHERE id=?",
                     (r["id"],),
@@ -712,6 +717,10 @@ class BehaviorWorker:
 
     def _analysis(self, j):
         v = self.store.one("SELECT * FROM videos WHERE id=?", (j["video_id"],))
+        # Restart recovery reruns a job from the beginning; do not duplicate its
+        # previous partial trace. A new reanalysis job retains earlier traces.
+        self.store.run("DELETE FROM candidate_traces WHERE job_id=?", (j["id"],))
+        self.store.run("DELETE FROM analysis_windows WHERE job_id=?", (j["id"],))
         path = Path(v["path"])
         self.store.run(
             "UPDATE videos SET status='processing',error=NULL WHERE id=?", (v["id"],)
@@ -805,12 +814,27 @@ class BehaviorWorker:
             if FOCUS_VIEW:
                 from .views import context_detail_frames
                 frames = context_detail_frames(frames, window_tracks)
-            with self.model_lock:
-                observations = self.analyzer.infer(
-                    frames, start, end, scene, window_tracks, capture_context
+            self.store.run(
+                "INSERT OR REPLACE INTO analysis_windows (job_id,video_id,window_index,start_s,end_s,frame_count,status,candidate_count) VALUES (?,?,?,?,?,?,?,0)",
+                (j["id"], v["id"], n, start, end, len(frames), "inference"),
+            )
+            try:
+                with self.model_lock:
+                    observations = self.analyzer.infer(
+                        frames, start, end, scene, window_tracks, capture_context
+                    )
+            except Exception:
+                self.store.run(
+                    "UPDATE analysis_windows SET status='error' WHERE job_id=? AND window_index=?",
+                    (j["id"], n),
                 )
+                raise
             if not isinstance(observations, list):
                 raise RuntimeError("model returned malformed event output")
+            self.store.run(
+                "UPDATE analysis_windows SET candidate_count=? WHERE job_id=? AND window_index=?",
+                (len(observations), j["id"], n),
+            )
             for x in observations:
                 if not isinstance(x, dict):
                     raise RuntimeError("model returned malformed event")
@@ -841,7 +865,15 @@ class BehaviorWorker:
                     "other_observable_event",
                 }:
                     raise RuntimeError("model returned an invalid action tag")
-                if not _has_non_routine_evidence(x):
+                reason = _candidate_rejection_reason(x)
+                self.store.run(
+                    "INSERT INTO candidate_traces VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (uuid.uuid4().hex, j["id"], v["id"], n, a, b, action,
+                     x["description"], _json(x["evidence"]), x["uncertainty"],
+                     "rejected" if reason else "accepted", reason or "", getattr(self.analyzer, "model_name", "unknown"),
+                     CONFIG_VERSION, utcnow()),
+                )
+                if reason:
                     continue
                 # Tracks provide optional temporal context.  They do not establish
                 # involvement, so only overlapping IDs are listed and descriptions
@@ -864,6 +896,10 @@ class BehaviorWorker:
                         "track_ids": tracks,
                     }
                 )
+            self.store.run(
+                "UPDATE analysis_windows SET status='done' WHERE job_id=? AND window_index=?",
+                (j["id"], n),
+            )
         for event in _merge(proposed):
             self._save_event(v, event)
         self.store.run("UPDATE videos SET status='done' WHERE id=?", (v["id"],))
@@ -945,6 +981,10 @@ def _starts(duration):
 
 
 def _has_non_routine_evidence(event: dict) -> bool:
+    return _candidate_rejection_reason(event) is None
+
+
+def _candidate_rejection_reason(event: dict) -> str | None:
     """Require an observable action, not a model label for ordinary presence.
 
     This is a conservative alert gate, not a classifier. It cannot establish
@@ -955,20 +995,20 @@ def _has_non_routine_evidence(event: dict) -> bool:
     words = " ".join([event["description"], *event["evidence"]]).lower()
     force = r"\b(?:pry|pries|pried|prying|break|breaking|broke|smash\w*|damag\w*|strik\w*|struck|forc\w*|cut\w*|shatter\w*)\b"
     if action == "climbing":
-        return True
+        return None
     if action == "boundary_entry":
         barrier = re.search(r"\b(?:fence|wall|barrier|window|gate)\b", words)
         crossing = re.search(r"\b(?:cross\w*|climb\w*|vault\w*|crawl\w*|squeez\w*|(?:pass\w*|enter\w*) (?:over|through))\b", words)
-        return bool(barrier and crossing)
+        return None if barrier and crossing else "no_visible_barrier_crossing"
     if action == "access_interaction":
         access = re.search(r"\b(?:door|window|gate|lock|fence|vehicle|car|van|truck)\b", words)
         repeated = re.search(r"\b(?:repeated\w*|multiple|several)\b.{0,35}\b(?:pull\w*|push\w*|attempt\w*|try|tries|tried|trying)\b", words)
-        return bool(access and (re.search(force, words) or repeated))
+        return None if access and (re.search(force, words) or repeated) else "no_forceful_access_attempt"
     if action == "object_tampering":
-        return bool(re.search(force, words))
+        return None if re.search(force, words) else "no_visible_object_damage"
     if action == "other_observable_event":
-        return bool(re.search(r"\b(?:fell|fall\w*|collaps\w*|punch\w*|kick\w*|fight\w*|struck|drag\w*)\b", words))
-    return False
+        return None if re.search(r"\b(?:fell|fall\w*|collaps\w*|punch\w*|kick\w*|fight\w*|struck|drag\w*)\b", words) else "no_specific_physical_incident"
+    return "unsupported_action"
 
 
 def _merge(events, gap=None):

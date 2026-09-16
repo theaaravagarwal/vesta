@@ -5,6 +5,7 @@ import os
 import json
 from pathlib import Path
 from unittest.mock import patch
+from evaluation.export_candidates import export as export_candidates
 
 import behavior
 from behavior import (
@@ -448,6 +449,38 @@ class BehaviorTests(unittest.TestCase):
         self.assertFalse(_has_non_routine_evidence(event))
         event["evidence"] = ["The person cuts a chain on the motorcycle."]
         self.assertTrue(_has_non_routine_evidence(event))
+
+    def test_candidate_trace_keeps_rejected_and_accepted_model_outputs(self):
+        source = self.store.media / "v.mp4"
+        source.write_bytes(b"media")
+        self.video()
+        self.store.run("UPDATE videos SET path=?,duration_s=8 WHERE id='v'", (str(source),))
+        self.store.run("INSERT INTO jobs VALUES ('j','v','analysis','queued',0,'queued',NULL,'now','now',0)")
+        sampled = self.temp / "000001.jpg"
+        sampled.write_bytes(b"frame")
+
+        class Analyzer(FakeAnalyzer):
+            def frames(self, *args):
+                return [sampled]
+
+            def infer(self, *args):
+                return [
+                    {"start_s": 0, "end_s": 1, "action": "other_observable_event",
+                     "description": "A person stands near a car", "evidence": ["Person stands beside car"], "uncertainty": ""},
+                    {"start_s": 1, "end_s": 2, "action": "climbing",
+                     "description": "A person climbs over a fence", "evidence": ["Leg moves over fence"], "uncertainty": ""},
+                ]
+
+        worker = BehaviorWorker(self.store, Analyzer())
+        with patch.object(worker, "_save_event") as save:
+            worker.run_job("j")
+        self.assertEqual(self.store.one("SELECT status FROM jobs WHERE id='j'")[0], "done")
+        save.assert_called_once()
+        trace = export_candidates(self.store.db_path, "v")
+        self.assertEqual(trace["windows"][0]["candidate_count"], 2)
+        self.assertEqual(trace["windows"][0]["frame_count"], 1)
+        self.assertEqual([c["decision"] for c in trace["candidates"]], ["rejected", "accepted"])
+        self.assertEqual(trace["candidates"][0]["reason"], "no_specific_physical_incident")
 
     def test_focus_frames_reach_inference_and_are_explained_to_the_model(self):
         source = self.store.media / "v.mp4"
