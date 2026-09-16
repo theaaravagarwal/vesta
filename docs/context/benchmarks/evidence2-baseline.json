@@ -1,0 +1,362 @@
+{
+ "date": "2026-09-16",
+ "purpose": "Fresh six-clip general surveillance baseline with private diagnostic traces; inference provenance is in runs.evidence2.run and top-level provenance describes report generation.",
+ "verdict": "All jobs completed; all eight labeled events missed. Zero ordinary alerts across only 48.204 seconds. Not reliable behavior recognition.",
+ "temporal_iou_threshold": 0.3,
+ "manifest": {
+  "path": "runs/benchmark-20260916/manifest.json",
+  "sha256": "91c33412d241ed4de2988bb1d8a562f3847e8f56c37caeec01136f6cfec378dc",
+  "clips": [
+   "uca-01",
+   "uca-02",
+   "uca-03",
+   "uca-04",
+   "uca-05",
+   "uca-06"
+  ],
+  "labeled_events": 8
+ },
+ "provenance": {
+  "git_head": "f90ec6b0e5d96e71dfbe824fbab63150a37c64f1",
+  "git_dirty": false,
+  "source_sha256": {
+   "behavior/__init__.py": "4be147a08ef827b24861db21051e3f3e92a1385a96a672bccd7b8bef9c0b2f52",
+   "behavior/views.py": "f5cc051e94d3d60d10c0a25ca09074b08e8a22bb828315d1488f238e65a4ca47",
+   "evaluation/metrics.py": "945a916e2ebec14089aee7fddbf99d70f62319956260495a61acb1ab90506eab"
+  },
+  "gpu": null,
+  "models": null,
+  "camera_accessed": false
+ },
+ "offline_sweeps": {},
+ "runs": {
+  "evidence2": {
+   "predictions_path": "runs/benchmark-20260916/uca_predictions.json",
+   "run": {
+    "manifest": "datasets/uca-demo/manifest.json",
+    "base_url": "http://127.0.0.1:33263",
+    "model": "qwen2.5vl:3b",
+    "config_version": "temporal-v3-bounded-evidence2",
+    "source_git_head": "a0259aaa2b6a41aa69606dead9636661a49dfe86",
+    "model_digest": "fb90415cde1ef08aa669ae74b082d49b158729b6db1ab183c941417d507e71a1",
+    "manifest_sha256": {
+     "datasets/uca-demo/manifest.json": "91c33412d241ed4de2988bb1d8a562f3847e8f56c37caeec01136f6cfec378dc",
+     "datasets/mobius-sample/manifest.json": "79bf94941aef05bbc5c80f3e283bdf4755037aa0b199fa02af3e57e41104094b"
+    },
+    "started_at": "2026-09-16T23:39:03Z"
+   },
+   "clips": {
+    "uca-01": {
+     "status": "done",
+     "candidate_count": 0,
+     "elapsed_s": 22.127,
+     "error": null
+    },
+    "uca-02": {
+     "status": "done",
+     "candidate_count": 0,
+     "elapsed_s": 102.225,
+     "error": null
+    },
+    "uca-03": {
+     "status": "done",
+     "candidate_count": 0,
+     "elapsed_s": 100.229,
+     "error": null
+    },
+    "uca-04": {
+     "status": "done",
+     "candidate_count": 0,
+     "elapsed_s": 108.255,
+     "error": null
+    },
+    "uca-05": {
+     "status": "done",
+     "candidate_count": 0,
+     "elapsed_s": 36.157,
+     "error": null
+    },
+    "uca-06": {
+     "status": "done",
+     "candidate_count": 0,
+     "elapsed_s": 54.142,
+     "error": null
+    }
+   },
+   "metrics": {
+    "action_aware": {
+     "run": {
+      "manifest": "datasets/uca-demo/manifest.json",
+      "base_url": "http://127.0.0.1:33263",
+      "model": "qwen2.5vl:3b",
+      "config_version": "temporal-v3-bounded-evidence2",
+      "source_git_head": "a0259aaa2b6a41aa69606dead9636661a49dfe86",
+      "model_digest": "fb90415cde1ef08aa669ae74b082d49b158729b6db1ab183c941417d507e71a1",
+      "manifest_sha256": {
+       "datasets/uca-demo/manifest.json": "91c33412d241ed4de2988bb1d8a562f3847e8f56c37caeec01136f6cfec378dc",
+       "datasets/mobius-sample/manifest.json": "79bf94941aef05bbc5c80f3e283bdf4755037aa0b199fa02af3e57e41104094b"
+      },
+      "started_at": "2026-09-16T23:39:03Z"
+     },
+     "by_action": {
+      "climbing": {
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 3
+      },
+      "object_tampering": {
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 3
+      },
+      "boundary_entry": {
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 2
+      }
+     },
+     "matching_mode": "action_aware_temporal",
+     "temporal_iou_threshold": 0.3,
+     "true_positive": 0,
+     "false_positive": 0,
+     "false_negative": 8,
+     "precision": null,
+     "recall": 0.0,
+     "precision_wilson_95": null,
+     "recall_wilson_95": [
+      0,
+      0.3244156195108769
+     ],
+     "false_alerts_per_video_hour": 0.0,
+     "ordinary_false_alerts": 0,
+     "ordinary_false_alerts_per_video_hour": 0.0,
+     "ordinary_reviewed_successful_clips": 2,
+     "ordinary_reviewed_successful_seconds": 48.204014,
+     "mean_start_error_s": null,
+     "mean_end_error_s": null,
+     "evaluated_seconds": 260.596032,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-02",
+      "uca-03",
+      "uca-04",
+      "uca-05",
+      "uca-06"
+     ],
+     "unreviewed_clips": [],
+     "missing_predictions": [],
+     "failed_predictions": [],
+     "clip_outcomes": [
+      {
+       "id": "uca-01",
+       "label_status": "reviewed",
+       "duration_s": 13.855011,
+       "status": "reviewed_successful",
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 2
+      },
+      {
+       "id": "uca-02",
+       "label_status": "reviewed",
+       "duration_s": 70.0,
+       "status": "reviewed_successful",
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 3
+      },
+      {
+       "id": "uca-03",
+       "label_status": "reviewed",
+       "duration_s": 70.0,
+       "status": "reviewed_successful",
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 2
+      },
+      {
+       "id": "uca-04",
+       "label_status": "reviewed",
+       "duration_s": 58.537007,
+       "status": "reviewed_successful",
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 1
+      },
+      {
+       "id": "uca-05",
+       "label_status": "reviewed",
+       "duration_s": 20.108005,
+       "status": "reviewed_successful",
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 0
+      },
+      {
+       "id": "uca-06",
+       "label_status": "reviewed",
+       "duration_s": 28.096009,
+       "status": "reviewed_successful",
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 0
+      }
+     ],
+     "coverage": {
+      "reviewed_successful": {
+       "clips": 6,
+       "seconds": 260.596032
+      },
+      "failed": {
+       "clips": 0,
+       "seconds": 0.0
+      },
+      "missing": {
+       "clips": 0,
+       "seconds": 0.0
+      },
+      "unreviewed": {
+       "clips": 0,
+       "seconds": 0.0
+      }
+     },
+     "complete": true,
+     "note": "Conditional on successfully analyzed, reviewed clips. Failures are not safe negatives. Wilson intervals treat events as independent; correlated camera/session data needs grouped analysis.",
+     "processing": {
+      "clips_with_elapsed_s": 6,
+      "elapsed_s_total": 423.135,
+      "elapsed_s_mean": 70.5225
+     }
+    },
+    "action_agnostic": {
+     "run": {
+      "manifest": "datasets/uca-demo/manifest.json",
+      "base_url": "http://127.0.0.1:33263",
+      "model": "qwen2.5vl:3b",
+      "config_version": "temporal-v3-bounded-evidence2",
+      "source_git_head": "a0259aaa2b6a41aa69606dead9636661a49dfe86",
+      "model_digest": "fb90415cde1ef08aa669ae74b082d49b158729b6db1ab183c941417d507e71a1",
+      "manifest_sha256": {
+       "datasets/uca-demo/manifest.json": "91c33412d241ed4de2988bb1d8a562f3847e8f56c37caeec01136f6cfec378dc",
+       "datasets/mobius-sample/manifest.json": "79bf94941aef05bbc5c80f3e283bdf4755037aa0b199fa02af3e57e41104094b"
+      },
+      "started_at": "2026-09-16T23:39:03Z"
+     },
+     "by_action": {},
+     "matching_mode": "action_agnostic_temporal",
+     "temporal_iou_threshold": 0.3,
+     "true_positive": 0,
+     "false_positive": 0,
+     "false_negative": 8,
+     "precision": null,
+     "recall": 0.0,
+     "precision_wilson_95": null,
+     "recall_wilson_95": [
+      0,
+      0.3244156195108769
+     ],
+     "false_alerts_per_video_hour": 0.0,
+     "ordinary_false_alerts": 0,
+     "ordinary_false_alerts_per_video_hour": 0.0,
+     "ordinary_reviewed_successful_clips": 2,
+     "ordinary_reviewed_successful_seconds": 48.204014,
+     "mean_start_error_s": null,
+     "mean_end_error_s": null,
+     "evaluated_seconds": 260.596032,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-02",
+      "uca-03",
+      "uca-04",
+      "uca-05",
+      "uca-06"
+     ],
+     "unreviewed_clips": [],
+     "missing_predictions": [],
+     "failed_predictions": [],
+     "clip_outcomes": [
+      {
+       "id": "uca-01",
+       "label_status": "reviewed",
+       "duration_s": 13.855011,
+       "status": "reviewed_successful",
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 2
+      },
+      {
+       "id": "uca-02",
+       "label_status": "reviewed",
+       "duration_s": 70.0,
+       "status": "reviewed_successful",
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 3
+      },
+      {
+       "id": "uca-03",
+       "label_status": "reviewed",
+       "duration_s": 70.0,
+       "status": "reviewed_successful",
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 2
+      },
+      {
+       "id": "uca-04",
+       "label_status": "reviewed",
+       "duration_s": 58.537007,
+       "status": "reviewed_successful",
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 1
+      },
+      {
+       "id": "uca-05",
+       "label_status": "reviewed",
+       "duration_s": 20.108005,
+       "status": "reviewed_successful",
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 0
+      },
+      {
+       "id": "uca-06",
+       "label_status": "reviewed",
+       "duration_s": 28.096009,
+       "status": "reviewed_successful",
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 0
+      }
+     ],
+     "coverage": {
+      "reviewed_successful": {
+       "clips": 6,
+       "seconds": 260.596032
+      },
+      "failed": {
+       "clips": 0,
+       "seconds": 0.0
+      },
+      "missing": {
+       "clips": 0,
+       "seconds": 0.0
+      },
+      "unreviewed": {
+       "clips": 0,
+       "seconds": 0.0
+      }
+     },
+     "complete": true,
+     "note": "Conditional on successfully analyzed, reviewed clips. Failures are not safe negatives. Wilson intervals treat events as independent; correlated camera/session data needs grouped analysis.",
+     "processing": {
+      "clips_with_elapsed_s": 6,
+      "elapsed_s_total": 423.135,
+      "elapsed_s_mean": 70.5225
+     }
+    }
+   }
+  }
+ }
+}

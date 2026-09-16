@@ -9,17 +9,27 @@ The worker normalizes media, tracks people, and analyzes every overlapping tempo
 window using structured candidate-event output. Failed analysis remains explicit.
 The review page can record a short webcam clip in the browser and upload it for
 the same offline analysis; this is not continuous camera monitoring. The current
-evidence gate is conservative: it suppresses generic presence/motion candidates
-and currently has only a two-clip live smoke result (ordinary UCA: zero alerts;
-clear Mobius: two climbing alerts). Broader surveillance behavior coverage and
-camera-viewpoint reliability are not established.
-Analysis jobs now retain private per-window and per-candidate diagnostics in
-SQLite, including evidence-gate rejection reasons. A deployed replay of the
-ordinary `uca-05` clip completed with zero public alerts; its private trace
-recorded five windows, two with no model candidates, and six rejected model
-candidates. This explains the gate's behavior for that clip without claiming
-general accuracy. See [evaluation tooling](../../evaluation/README.md) for the
-local export command.
+evidence gate suppresses generic presence/motion candidates, but a fresh six-clip
+public replay missed all eight labeled events despite all jobs completing. The
+two ordinary clips produced zero alerts across only 48.204 seconds; this is not an
+operational false-alert estimate. Clear Mobius footage still produced two climbing
+alerts, with unreviewed timing. See the [dated benchmark](public-benchmark.md#evidence-gate-baseline--2026-09-16).
+
+Private diagnostics now record sampling failures as well as inference failures,
+per-window model/config provenance, and candidate rejection reasons. The export
+summarizes each job and explicitly distinguishes complete, partial, historical
+missing, and unavailable traces. Historical rows retain unknown provenance.
+Evaluation reports separate ordinary footage exposure from positive clips, expose
+failed/missing/unreviewed coverage, and retain per-clip outcomes and available
+processing wall times. An opt-in paired full-scene/detail-view probe supports
+bounded experiments without changing production defaults. See
+[evaluation tooling](../../evaluation/README.md).
+
+The delivery target remains a camera network, with a one-camera demo first and
+roughly 50-foot maximum subject distance anticipated by the user. Camera count,
+image detail, lighting and stream resolution still need deployment measurements.
+The current webcam path tests recording/upload and ordinary-scene behavior; it
+does not validate continuous capture or distant action recognition.
 
 The event prompt policy (`BEHAVIOR_EVENT_POLICY`), the spatial focus view
 (`BEHAVIOR_FOCUS_VIEW`) and the event merge gap (`BEHAVIOR_MERGE_GAP_S`) are

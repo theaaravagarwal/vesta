@@ -14,6 +14,7 @@ readable as what was true then.
 | 2026-09-15 | [observable-v3 candidates](#rejected-detection-experiment--observable-v3) | `temporal-v3-actions`, 3B and 7B | Not promoted | [v3-comparison.json](benchmarks/v3-comparison.json) |
 | 2026-09-15 | [Focus-view comparison](#result--focus-views-not-promoted-2026-09-15) | `temporal-v3-bounded` with and without focus | Not promoted | [focus-comparison.json](benchmarks/focus-comparison.json) |
 | 2026-09-15 | [Event merge gap](#event-merge-gap--2026-09-15) | `temporal-v3-bounded` with and without a 1s merge gap | Recommended, not yet defaulted | [merge-gap.json](benchmarks/merge-gap.json) |
+| 2026-09-16 | [Evidence-gate baseline](#evidence-gate-baseline--2026-09-16) | `temporal-v3-bounded-evidence2`, 3B | All eight labeled events missed | [evidence2-baseline.json](benchmarks/evidence2-baseline.json) |
 
 No run in this table establishes accuracy on the target camera. All of them use
 small, selected public clips.
@@ -313,3 +314,58 @@ ordinary walking clip still produced an alert, and exact-action matching remains
 near zero. Three development clips cannot establish an operational false-alert
 rate. Production default stays `0` until this is confirmed on source videos that
 were not used to find the problem.
+
+## Evidence-gate baseline — 2026-09-16
+
+A fresh serial replay froze inference at commit `a0259aa`, `qwen2.5vl:3b`,
+`temporal-v3-bounded-evidence2`, full-scene views, and 2 fps sampling. The serving
+context was observed at 32768 tokens. The [generated record](benchmarks/evidence2-baseline.json)
+retains inference commit/model/manifest provenance in `runs.evidence2.run`;
+top-level provenance describes the later reporting code, not the inference code.
+
+All six jobs completed: **0 exact-action hits, 8 missed labeled events, 0 false
+alerts, 0 failed jobs**. Action-agnostic matching also found no hits. Ordinary
+exposure was just **48.204 seconds** across two selected clips. The calculated
+zero-per-hour rate is not evidence of a low campus false-alert rate. The 260.596
+seconds of input took 423.135 seconds of summed upload/queue/processing wall time;
+this is not a measured live-camera capacity.
+
+Private traces help separate the failures:
+
+| Clip | Raw candidates | Trace finding |
+| --- | ---: | --- |
+| uca-01 | 2 | Other-event candidates rejected for no specific physical incident |
+| uca-02 | 0 | No candidate reached the gate |
+| uca-03 | 0 | No candidate reached the gate; sampled source frames also warrant annotation/timing review |
+| uca-04 | 19 | 16 access candidates lacked forceful-access evidence; 3 other candidates lacked a specific incident |
+| uca-05 (ordinary) | 3 | All other-event candidates rejected |
+| uca-06 (ordinary) | 10 | All rejected: 4 access, 1 tampering, 5 other-event candidates |
+
+The door-impact label maps to object tampering while model candidates mostly use
+access interaction. That taxonomy difference and broad publisher timing require
+review; the frozen labels and unfavorable scores remain unchanged. Empty sampled
+frames alone do not prove the source annotation is wrong.
+
+The separate Mobius smoke replay completed in 98.376 seconds with two accepted
+climbing events (16–23.5 and 32–36 seconds). Its timing is unreviewed and it is
+excluded from scored positives and ordinary exposure. Raw predictions, private
+traces and source-frame checks are on the compute host under
+`runtime/experiment-baseline-20260916T2316Z/`.
+
+### Bounded paired-view diagnostic
+
+The opt-in probe compared the same 2 fps full view and full-scene/detail panels
+for `uca-04` seconds 40–48, using normalized box `[0.30,0.30,0.70,0.80]`
+(expanded bounds `[0.16,0.175,0.84,0.925]`). Full view produced one access
+candidate; focused view produced four. All lacked forceful-access evidence and
+were rejected. Neither recovered the labeled tampering action. Model calls took
+7.001 and 9.716 seconds respectively, excluding tracking/frame preparation.
+
+The ordinary `uca-05` control at seconds 12–20 failed its full-view call with
+malformed JSON; focus was not run. It supplies no false-alert evidence for this
+comparison. Failed attempts remain in the host probe logs. This is a selected
+window diagnostic, not a repeat of the benchmark or a throughput measurement.
+**No view or gate change was promoted.** Further recognition work must address
+observable action evidence and output reliability, then repeat positive and
+ordinary comparisons. Broad gate loosening would also expose ordinary-scene
+candidates seen in the baseline traces.
