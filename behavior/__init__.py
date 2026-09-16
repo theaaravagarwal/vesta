@@ -35,12 +35,19 @@ if EVENT_POLICY not in {"baseline", "observable-v3"}:
 # against the other requires selecting them separately, so a focus run records
 # its own config version rather than implying a different event policy.
 FOCUS_VIEW = os.getenv("BEHAVIOR_FOCUS_VIEW", "0").strip() == "1"
+# One continuous action is reported once per overlapping window, so the same
+# action resuming within a short gap is one candidate rather than several.  Zero
+# keeps the previous overlap-only behavior.
+MERGE_GAP_S = float(os.getenv("BEHAVIOR_MERGE_GAP_S", "0"))
+if not 0 <= MERGE_GAP_S <= WINDOW_S:
+    raise ValueError(f"BEHAVIOR_MERGE_GAP_S must be between 0 and {WINDOW_S}")
 
 
 def config_version() -> str:
     """Provenance tag written onto every event produced by this process."""
     policy = "temporal-v3-actions" if EVENT_POLICY == "observable-v3" else "temporal-v3-bounded"
-    return policy + ("-focus" if FOCUS_VIEW else "")
+    gap = f"-gap{MERGE_GAP_S:g}" if MERGE_GAP_S else ""
+    return policy + ("-focus" if FOCUS_VIEW else "") + gap
 
 
 CONFIG_VERSION = config_version()
@@ -934,7 +941,8 @@ def _starts(duration):
     return out
 
 
-def _merge(events):
+def _merge(events, gap=None):
+    gap = MERGE_GAP_S if gap is None else gap
     out = []
     for e in sorted(events, key=lambda x: (x["action"].lower(), x["start_s"])):
         prev = next(
@@ -942,7 +950,7 @@ def _merge(events):
                 x
                 for x in reversed(out)
                 if x["action"].lower() == e["action"].lower()
-                and e["start_s"] <= x["end_s"]
+                and e["start_s"] <= x["end_s"] + gap
             ),
             None,
         )

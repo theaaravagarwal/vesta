@@ -369,6 +369,46 @@ class BehaviorTests(unittest.TestCase):
             self.store.one("SELECT count(*) FROM outbox WHERE event_id='e'")[0], 1
         )
 
+    def event(self, action, start, end):
+        return {
+            "start_s": start,
+            "end_s": end,
+            "action": action,
+            "description": "",
+            "evidence": [],
+            "uncertainty": "unknown",
+            "track_ids": [],
+        }
+
+    def test_merge_gap_joins_window_fragments_of_one_action(self):
+        fragments = [
+            self.event("access_interaction", 33.0, 33.5),
+            self.event("access_interaction", 34.0, 34.5),
+            self.event("access_interaction", 35.0, 35.5),
+        ]
+        self.assertEqual(len(_merge(fragments, gap=0)), 3)
+        merged = _merge(fragments, gap=1.0)
+        self.assertEqual(len(merged), 1)
+        self.assertEqual((merged[0]["start_s"], merged[0]["end_s"]), (33.0, 35.5))
+
+    def test_merge_gap_keeps_separated_and_differing_actions_apart(self):
+        events = [
+            self.event("access_interaction", 10.0, 11.0),
+            self.event("access_interaction", 30.0, 31.0),
+            self.event("climbing", 11.5, 12.0),
+        ]
+        merged = _merge(events, gap=1.0)
+        self.assertEqual(len(merged), 3)
+        self.assertEqual(
+            [e["action"] for e in merged],
+            ["access_interaction", "climbing", "access_interaction"],
+        )
+
+    def test_merge_gap_is_recorded_in_the_config_version(self):
+        self.assertNotIn("gap", config_version())
+        with patch.object(behavior, "MERGE_GAP_S", 1.0):
+            self.assertEqual(config_version(), "temporal-v3-bounded-gap1")
+
     def test_focus_view_is_selectable_without_the_experimental_policy(self):
         self.assertEqual(behavior.EVENT_POLICY, "baseline")
         self.assertEqual(config_version(), "temporal-v3-bounded")

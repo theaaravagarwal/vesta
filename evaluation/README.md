@@ -75,6 +75,27 @@ separated from the variant that produced it, and a run with zero events still
 records what produced the zero. Prediction files written before this existed
 simply report `"run": null`. A manifest may not use `run` as a clip ID.
 
+## Recording a run
+
+After replay and scoring, generate the machine-readable record that the
+[public benchmark](../docs/context/public-benchmark.md) table links:
+
+```bash
+.venv/bin/python evaluation/record_run.py \
+  --manifest datasets/uca-development-v3.json \
+  --run control=runs/focus-off-2-predictions.json \
+  --run focus=runs/focus-on-2-predictions.json \
+  --purpose "what this run was for" --verdict "what was decided" \
+  --out docs/context/benchmarks/<run>.json
+```
+
+It scores both matching modes, summarizes per-clip status including failures,
+and captures provenance: git head and whether the tree was dirty, SHA-256 of the
+analysis sources, GPU, and model digests from the serving endpoint. Anything it
+could not inspect is recorded as `null` rather than guessed, so a record never
+implies a check that did not happen. Write the prose section from the generated
+record, not from memory, and append new runs instead of editing old ones.
+
 Variant experiments run against `evaluation.serve:create_app()` in an isolated
 `VESTA_EXPERIMENT_RUNTIME`, never the production database. That app now requires
 `BEHAVIOR_EVENT_POLICY` and `BEHAVIOR_FOCUS_VIEW` to be set explicitly: the event

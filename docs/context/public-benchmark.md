@@ -1,5 +1,22 @@
 # Public labeled-video benchmark
 
+## Recorded runs
+
+Every scored run has a dated section below and a generated record in
+`benchmarks/`. Records are written by `evaluation/record_run.py` from the run
+artifacts, so the numbers in a record and the numbers in the prose come from the
+same source. Past results are appended, never edited: a superseded result stays
+readable as what was true then.
+
+| Date | Run | Configuration | Verdict | Record |
+| --- | --- | --- | --- | --- |
+| 2026-09-15 | [Six-clip baseline](#baseline-results--2026-09-15) | `temporal-v2-schema`, 3B | Immutable reference | [uca-baseline.json](benchmarks/uca-baseline.json) |
+| 2026-09-15 | [observable-v3 candidates](#rejected-detection-experiment--observable-v3) | `temporal-v3-actions`, 3B and 7B | Not promoted | [v3-comparison.json](benchmarks/v3-comparison.json) |
+| 2026-09-15 | [Focus-view comparison](#result--focus-views-not-promoted-2026-09-15) | `temporal-v3-bounded` with and without focus | Not promoted | [focus-comparison.json](benchmarks/focus-comparison.json) |
+
+No run in this table establishes accuracy on the target camera. All of them use
+small, selected public clips.
+
 ## Purpose and sources
 
 Use existing publisher annotations so the user does not need to collect or label a dataset to begin testing. This is a small exploratory behavior benchmark, not a campus-readiness certification.
@@ -121,7 +138,7 @@ Raw run artifacts are `runs/v3-{3b,7b}-predictions.json` on the host. The candid
 [Official model metadata](https://ollama.com/library/qwen2.5vl:7b) and
 [structured-output API reference](https://docs.ollama.com/capabilities/structured-outputs).
 
-## Pending experiment — spatial crops under the production policy
+## Experiment — spatial crops under the production policy
 
 Prompt policy and spatial crops were previously coupled: `BEHAVIOR_FOCUS_VIEW=1`
 was rejected at startup unless the `observable-v3` policy was also selected, so
@@ -201,6 +218,7 @@ were produced from this attempt.
 
 ### Result — focus views not promoted (2026-09-15)
 
+[Machine-readable record](benchmarks/focus-comparison.json).
 Retry from a restarted inference service, application commit `31bd835`,
 `qwen2.5vl:3b`, development clips only, control run first. Artifacts on the host
 are `runs/focus-{off,on}-2-{predictions,exact,agnostic}.json`.

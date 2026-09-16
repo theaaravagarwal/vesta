@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from evaluation.metrics import match_events, score, validate_manifest
+from evaluation.merge_sweep import sweep
 from evaluation.record_run import build, clip_summary
 
 
@@ -112,6 +113,55 @@ class MetricsTests(unittest.TestCase):
         self.assertEqual(r["recall"], 1)
         self.assertEqual(r["precision"], 1)
         self.assertEqual(r["mean_start_error_s"], 0)
+
+
+class MergeSweepTests(unittest.TestCase):
+    """Offline re-merge must not invent or lose matched events."""
+
+    manifest = {
+        "schema_version": 1,
+        "clips": [
+            {
+                "id": "a",
+                "source_url": "https://example.test/a",
+                "license": "CC-BY-4.0",
+                "session_group": "day1",
+                "split": "development",
+                "path": "a.mp4",
+                "duration_s": 60,
+                "label_status": "reviewed",
+                "events": [{"action": "climbing", "start_s": 10, "end_s": 20}],
+            }
+        ],
+    }
+
+    def predictions(self):
+        return {
+            "run": {"model": "m", "config_version": "temporal-v3-bounded"},
+            "a": {
+                "status": "done",
+                "events": [
+                    {"action": "climbing", "start_s": 10.0, "end_s": 12.0},
+                    {"action": "climbing", "start_s": 12.5, "end_s": 19.0},
+                    {"action": "climbing", "start_s": 40.0, "end_s": 41.0},
+                ],
+            },
+        }
+
+    def test_gap_merges_fragments_without_losing_the_matched_event(self):
+        rows = {r["gap_s"]: r for r in sweep(self.manifest, self.predictions(), [0, 1])}
+        self.assertEqual(rows[0]["candidates"], 3)
+        self.assertEqual(rows[1]["candidates"], 2)
+        self.assertEqual(rows[0]["action_agnostic_true_positive"], 1)
+        self.assertEqual(rows[1]["action_agnostic_true_positive"], 1)
+        self.assertGreater(
+            rows[1]["action_agnostic_precision"], rows[0]["action_agnostic_precision"]
+        )
+
+    def test_sweep_does_not_mutate_the_recorded_predictions(self):
+        predictions = self.predictions()
+        sweep(self.manifest, predictions, [4])
+        self.assertEqual(len(predictions["a"]["events"]), 3)
 
 
 class RecordRunTests(unittest.TestCase):

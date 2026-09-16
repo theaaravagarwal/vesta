@@ -20,6 +20,7 @@ Frigate is a reference for event review, recording retention, and detection work
 - [Accepted implementation plan](implementation-plan.md)
 - [Verification results and limitations](verification.md)
 
-- [Public labeled-video benchmark](public-benchmark.md)
+- [Public labeled-video benchmark](public-benchmark.md) — recorded runs index;
+  each scored run has a generated record in [benchmarks/](benchmarks/)
 
 - [Broader dataset survey and Mobius sample test](dataset-survey.md)
