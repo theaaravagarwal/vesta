@@ -55,6 +55,8 @@ def validate_manifest(manifest):
         raise ValueError("schema_version must be 1")
     seen, group_splits = set(), {}
     for clip in manifest["clips"]:
+        if clip["id"] == "run":
+            raise ValueError("'run' is reserved for prediction run metadata")
         if clip["id"] in seen:
             raise ValueError("duplicate clip ID")
         seen.add(clip["id"])
@@ -84,6 +86,11 @@ def validate_manifest(manifest):
 def score(manifest, predictions, threshold=0.3, ignore_action=False):
     validate_manifest(manifest)
     expected_ids = {c["id"] for c in manifest["clips"]}
+    # ``run`` carries model/config provenance written by replay.py; it is echoed
+    # with the results so a score is never separated from the variant that
+    # produced it. Older prediction files simply have no run metadata.
+    run = predictions.get("run") if isinstance(predictions.get("run"), dict) else None
+    predictions = {k: v for k, v in predictions.items() if k != "run" or run is None}
     if set(predictions) - expected_ids:
         raise ValueError("predictions contain unknown clip IDs")
     tp = fp = fn = 0
@@ -137,6 +144,7 @@ def score(manifest, predictions, threshold=0.3, ignore_action=False):
             start_errors.append(abs(truth[j]["start_s"] - events[i]["start_s"]))
             end_errors.append(abs(truth[j]["end_s"] - events[i]["end_s"]))
     return {
+        "run": run,
         "by_action": by_action,
         "matching_mode": "action_agnostic_temporal"
         if ignore_action

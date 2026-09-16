@@ -109,12 +109,61 @@ response fails visibly; it never becomes an empty safe result. Thirty tests pass
 including actual truncated-JSON retry and exhausted-retry cases. The production
 policy's known detection failures remain unresolved.
 
-For reproducibility, `evaluation.serve:create_app()` selects the rejected
-`observable-v3` policy only in an explicitly isolated experiment runtime.
-Production defaults to `BEHAVIOR_EVENT_POLICY=baseline`. Optional focus views
-require the experimental policy and remain disabled; they have not been scored.
+For reproducibility, `evaluation.serve:create_app()` runs only in an explicitly
+isolated experiment runtime and now requires `BEHAVIOR_EVENT_POLICY` and
+`BEHAVIOR_FOCUS_VIEW` to be set explicitly; it no longer selects the rejected
+`observable-v3` policy implicitly. Reproduce the rejected run with
+`BEHAVIOR_EVENT_POLICY=observable-v3 BEHAVIOR_FOCUS_VIEW=0`. Production still
+defaults to `BEHAVIOR_EVENT_POLICY=baseline` and `BEHAVIOR_FOCUS_VIEW=0`.
 Raw run artifacts are `runs/v3-{3b,7b}-predictions.json` on the host. The candidate
 7B model is still downloaded but not selected by the main service; digest
 `5ced39dfa4bac325dc183dd1e4febaa1c46b3ea28bce48896c8e69c1e79611cc`.
 [Official model metadata](https://ollama.com/library/qwen2.5vl:7b) and
 [structured-output API reference](https://docs.ollama.com/capabilities/structured-outputs).
+
+## Pending experiment — spatial crops under the production policy
+
+Prompt policy and spatial crops were previously coupled: `BEHAVIOR_FOCUS_VIEW=1`
+was rejected at startup unless the `observable-v3` policy was also selected, so
+the crop hypothesis could only have been tested together with the prompt change
+that suppressed every event. They are now independent settings, and the baseline
+prompt carries the same two-panel explanation the experimental prompt had, so a
+crop run is no longer implicitly a prompt change as well. Events and
+`GET /api/system` report the variant as `temporal-v3-bounded-focus`.
+
+This is a change to what can be tested, not a detection result. Focus views
+remain unscored, remain disabled in production, and no accuracy claim follows
+from this change. The motivating observation is that the production 3B model
+emitted climbing on the close portrait-format [Mobius sample](dataset-survey.md)
+while missing the wider UCA views; spatial scale is a plausible but unmeasured
+explanation, and `behavior/views.py` deliberately returns the original frames
+when tracks are widely separated, so some windows will be unchanged.
+
+Procedure, on the compute host, against the frozen development clips
+(`uca-01`, `uca-04`, `uca-05`) and never against held-out sources:
+
+The importer writes one six-clip manifest. The development subset used by the
+rejected `observable-v3` comparison already exists on the host as
+`datasets/uca-development-v3.json`: the same `uca-01`, `uca-04` and `uca-05`
+records, marked `split: development`, still pointing at the `datasets/uca-demo/`
+media so checksums keep verifying. Reuse it, and keep `uca-02`, `uca-03` and
+`uca-06` out of every tuning run. On a fresh host, filter the importer's manifest
+to those three IDs and set their split to `development` rather than re-importing.
+
+Then run the variant:
+
+```bash
+VESTA_EXPERIMENT_RUNTIME=runtime/experiments/focus \
+BEHAVIOR_EVENT_POLICY=baseline BEHAVIOR_FOCUS_VIEW=1 \
+  .venv/bin/gunicorn --bind 127.0.0.1:33264 --workers 1 --threads 8 \
+  --timeout 360 'evaluation.serve:create_app()'
+.venv/bin/python evaluation/replay.py datasets/uca-dev/manifest.json \
+  --base-url http://127.0.0.1:33264 --output runs/focus-predictions.json
+.venv/bin/python evaluation/evaluate.py datasets/uca-dev/manifest.json \
+  runs/focus-predictions.json --ignore-action
+```
+
+Compare against a `BEHAVIOR_FOCUS_VIEW=0` run in a separate runtime directory
+with the same model digest. Three previously inspected development clips cannot
+promote a variant; a candidate that survives this comparison needs different
+source videos before any production change.

@@ -31,9 +31,19 @@ WINDOW_S, STRIDE_S, SAMPLE_FPS = 8.0, 4.0, 2.0
 EVENT_POLICY = os.getenv("BEHAVIOR_EVENT_POLICY", "baseline")
 if EVENT_POLICY not in {"baseline", "observable-v3"}:
     raise ValueError("BEHAVIOR_EVENT_POLICY must be baseline or observable-v3")
-CONFIG_VERSION = ("temporal-v3-actions" if EVENT_POLICY == "observable-v3" else "temporal-v3-bounded") + ("-focus" if os.getenv("BEHAVIOR_FOCUS_VIEW", "0") == "1" else "")
-if os.getenv("BEHAVIOR_FOCUS_VIEW", "0") == "1" and EVENT_POLICY != "observable-v3":
-    raise ValueError("Focus views are experimental and require observable-v3")
+# Spatial crops and the event prompt are independent variables.  Scoring one
+# against the other requires selecting them separately, so a focus run records
+# its own config version rather than implying a different event policy.
+FOCUS_VIEW = os.getenv("BEHAVIOR_FOCUS_VIEW", "0").strip() == "1"
+
+
+def config_version() -> str:
+    """Provenance tag written onto every event produced by this process."""
+    policy = "temporal-v3-actions" if EVENT_POLICY == "observable-v3" else "temporal-v3-bounded"
+    return policy + ("-focus" if FOCUS_VIEW else "")
+
+
+CONFIG_VERSION = config_version()
 
 
 def utcnow() -> str:
@@ -457,7 +467,9 @@ class TemporalAnalyzer:
             )
         else:
             prompt = (
-                "Review this chronological 8-second video window. Frames are ordered and correspond to these exact video timestamps: "
+                "Review this chronological 8-second video window. "
+                + focus_note
+                + "Frames are ordered and correspond to these exact video timestamps: "
                 f"{timestamps}. Create events only for concrete non-routine candidate behaviors worth human review: climbing, unusual boundary entry, repeated access interaction, possible object tampering, or another specifically observable non-routine action. "
                     "Routine walking, gathering, or carrying tools alone must produce an empty events list. Use action only from climbing, boundary_entry, access_interaction, object_tampering, other_observable_event. "
                     "Do not label criminality. Keep an observable candidate event when its interpretation is uncertain and explain that uncertainty. Mention after-hours only when capture context supplies an approved schedule. "
@@ -782,7 +794,7 @@ class BehaviorWorker:
             window_tracks = [
                 o for o in track_observations if start <= o["time_s"] <= end
             ]
-            if os.getenv("BEHAVIOR_FOCUS_VIEW", "0") == "1":
+            if FOCUS_VIEW:
                 from .views import context_detail_frames
                 frames = context_detail_frames(frames, window_tracks)
             with self.model_lock:
@@ -900,7 +912,7 @@ class BehaviorWorker:
                 "",
                 str(clip),
                 getattr(self.analyzer, "model_name", "unknown"),
-                CONFIG_VERSION,
+                config_version(),
             ),
         )
         self.store.run(
@@ -1311,6 +1323,8 @@ def behavior_blueprint(store: Store, worker: BehaviorWorker):
                 "storage": s,
                 "worker": {"alive": bool(worker.thread and worker.thread.is_alive())},
                 "model": getattr(worker.analyzer, "model_name", "unknown"),
+                # Zero-event runs still need to record which variant produced them.
+                "config_version": config_version(),
             }
         )
 

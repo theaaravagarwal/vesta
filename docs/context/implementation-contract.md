@@ -17,7 +17,7 @@ The new default page is `/review`; `/` redirects there, and the original UI rema
 - `PATCH /api/events/<id>`: `{review_status: "unreviewed"|"confirmed"|"dismissed", pinned: bool, correction: string}`; partial updates allowed, server validates.
 - `GET /api/events/<id>/clip`: compressed evidence playback.
 - `GET /api/outbox`: `{items: [...]}`; statuses are `pending_integration`, never falsely delivered.
-- `GET /api/system`: `{storage: {used_percent, free_gb, paused, message}, worker: {alive}, model: string}`.
+- `GET /api/system`: `{storage: {used_percent, free_gb, paused, message}, worker: {alive}, model: string, config_version: string}`. `config_version` names the running event policy and focus-view variant, so a run that produces no events still records what produced it.
 
 ## Response objects
 

@@ -22,8 +22,21 @@ a = p.parse_args()
 manifest = json.loads(a.manifest.read_text())
 validate_manifest(manifest)
 root = Path(__file__).resolve().parents[1]
-results = {}
+# Record the serving variant before any upload. A run that produces no events
+# still has to state which model and configuration produced that result.
+with urlopen(a.base_url.rstrip("/") + "/api/system", timeout=30) as response:
+    system = json.load(response)
+results = {
+    "run": {
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "manifest": str(a.manifest),
+        "base_url": a.base_url,
+        "model": system.get("model"),
+        "config_version": system.get("config_version"),
+    }
+}
 a.output.parent.mkdir(parents=True, exist_ok=True)
+print("variant", results["run"]["model"], results["run"]["config_version"], flush=True)
 for clip in manifest["clips"]:
     path = (root / clip["path"]).resolve()
     if (

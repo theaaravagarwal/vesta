@@ -40,3 +40,19 @@ The [six-video UCA baseline](public-benchmark.md) now provides an exploratory
 publisher-labeled test. It exposed missed actions, false alerts on ordinary
 activity, and one failed job. The earlier MEVA smoke success does not imply
 behavior detection quality. See that report for complete counts and source provenance.
+
+## Variant-selection change — 2026-09-15
+
+Checked on the local development machine only, with no GPU, model endpoint or
+camera involved. 38 unit/API/evaluation tests pass, including the new cases for a
+focus-view run under the production event policy, the two-panel explanation
+reaching the baseline prompt, `config_version` in `GET /api/system`, run
+provenance echoed by the evaluator, and the experiment app refusing to start
+without an explicit variant.
+
+Not established by this change: any detection result. No replay, no host run and
+no model inference were performed, focus views remain unscored and disabled in
+production, and the failures recorded in the [public benchmark](public-benchmark.md)
+are unchanged. What changed is that the spatial-crop hypothesis can now be tested
+without simultaneously changing the event prompt.
+

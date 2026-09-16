@@ -65,3 +65,20 @@ action mapping is explicit and exploratory; no user labeling is needed to run it
 
 Action-agnostic matching evaluates temporal overlap only and explicitly omits
 per-action statistics. It is not a claim that the predicted action was correct.
+
+## Run provenance and variants
+
+`replay.py` reads `GET /api/system` before uploading anything and writes the
+serving model and `config_version` into the predictions file under the reserved
+`run` key. `evaluate.py` echoes that block in its results, so a score is never
+separated from the variant that produced it, and a run with zero events still
+records what produced the zero. Prediction files written before this existed
+simply report `"run": null`. A manifest may not use `run` as a clip ID.
+
+Variant experiments run against `evaluation.serve:create_app()` in an isolated
+`VESTA_EXPERIMENT_RUNTIME`, never the production database. That app now requires
+`BEHAVIOR_EVENT_POLICY` and `BEHAVIOR_FOCUS_VIEW` to be set explicitly: the event
+prompt and the spatial-crop view are independent variables, and changing both at
+once produced the uninterpretable results recorded in
+[the public benchmark](../docs/context/public-benchmark.md). Use one runtime
+directory per variant and keep the model digest fixed across the comparison.

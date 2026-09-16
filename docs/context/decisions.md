@@ -31,3 +31,11 @@ Repository behavior claims refer to the checked-out files and line references in
 - Retention has no fixed expiry: clean under storage pressure, protecting confirmed incidents and pinned clips. Pause rather than delete protected evidence.
 - Learning means collecting reviewed corrections; no automatic identity enrollment or self-training. Future cross-camera work is incident-only path linking with uncertain matches.
 - Primary host runs inference and future training; those workloads share 16 GB VRAM and must be scheduled, not assumed concurrent.
+
+## Experiment hygiene decisions (2026-09-15)
+
+- Event prompt policy and spatial focus views are independent settings. Coupling them meant the one recorded focus-capable configuration also changed the prompt, and the resulting suppression of every event could not be attributed to either change.
+- The isolated experiment app refuses to start without an explicit variant selection rather than inheriting production defaults.
+- Prediction artifacts carry the serving model and config version, so a run that produced no events still records the configuration that produced none.
+- Neither focus views nor any other candidate is promoted by these changes; production defaults are unchanged and the known detection failures remain unresolved.
+

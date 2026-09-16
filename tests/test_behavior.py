@@ -6,7 +6,17 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from behavior import Store, TemporalAnalyzer, _merge, _starts, _valid_scene, create_app
+import behavior
+from behavior import (
+    BehaviorWorker,
+    Store,
+    TemporalAnalyzer,
+    _merge,
+    _starts,
+    _valid_scene,
+    config_version,
+    create_app,
+)
 
 
 class FakeAnalyzer:
@@ -358,6 +368,76 @@ class BehaviorTests(unittest.TestCase):
         self.assertEqual(
             self.store.one("SELECT count(*) FROM outbox WHERE event_id='e'")[0], 1
         )
+
+    def test_focus_view_is_selectable_without_the_experimental_policy(self):
+        self.assertEqual(behavior.EVENT_POLICY, "baseline")
+        self.assertEqual(config_version(), "temporal-v3-bounded")
+        with patch.object(behavior, "FOCUS_VIEW", True):
+            self.assertEqual(config_version(), "temporal-v3-bounded-focus")
+            reported = self.client.get("/api/system").get_json()
+        self.assertEqual(reported["config_version"], "temporal-v3-bounded-focus")
+
+    def test_focus_frames_reach_inference_and_are_explained_to_the_model(self):
+        source = self.store.media / "v.mp4"
+        source.write_bytes(b"media")
+        self.video()
+        self.store.run("UPDATE videos SET path=? WHERE id='v'", (str(source),))
+        self.store.run(
+            "INSERT INTO jobs VALUES ('j','v','analysis','queued',0,'queued',NULL,'now','now',0)"
+        )
+        sampled = self.temp / "000001.jpg"
+        sampled.write_bytes(b"x")
+        focused = self.temp / "000001-focus.jpg"
+        focused.write_bytes(b"x")
+        seen = []
+
+        class Analyzer(FakeAnalyzer):
+            def frames(self, path, out, start, end):
+                return [sampled]
+
+            def infer(self, frames, *args):
+                seen.append(list(frames))
+                return []
+
+        worker = BehaviorWorker(self.store, Analyzer())
+        with patch.object(behavior, "FOCUS_VIEW", True), patch(
+            "behavior.views.context_detail_frames", return_value=[focused]
+        ) as transform:
+            worker.run_job("j")
+        self.assertEqual(self.store.one("SELECT status FROM jobs WHERE id='j'")[0], "done")
+        self.assertEqual(transform.call_args.args[0], [sampled])
+        self.assertEqual(seen, [[focused], [focused]])
+
+        prompts = []
+
+        class Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self):
+                return json.dumps(
+                    {
+                        "model": "test",
+                        "choices": [
+                            {
+                                "finish_reason": "stop",
+                                "message": {"content": '{"events":[]}'},
+                            }
+                        ],
+                    }
+                ).encode()
+
+        def capture(req, timeout=None):
+            prompts.append(json.loads(req.data)["messages"][0]["content"][0]["text"])
+            return Response()
+
+        with patch("urllib.request.urlopen", side_effect=capture):
+            TemporalAnalyzer().infer([focused], 0, 8, {})
+        self.assertIn("full scene LEFT, enlarged detail RIGHT", prompts[0])
+        self.assertIn("Create events only for concrete", prompts[0])
 
     def test_confirmed_or_corrected_event_blocks_reanalysis(self):
         self.video()
