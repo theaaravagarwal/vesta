@@ -87,7 +87,7 @@ def clip_summary(predictions: dict) -> dict:
     }
 
 
-def build(manifest_path: Path, runs: dict[str, Path], purpose: str, verdict: str | None, iou: float, base_url: str | None) -> dict:
+def build(manifest_path: Path, runs: dict[str, Path], purpose: str, verdict: str | None, iou: float, base_url: str | None, sweeps: dict[str, Path] | None = None) -> dict:
     manifest = json.loads(manifest_path.read_text())
     record = {
         "date": datetime.now(timezone.utc).date().isoformat(),
@@ -101,6 +101,11 @@ def build(manifest_path: Path, runs: dict[str, Path], purpose: str, verdict: str
             "labeled_events": sum(len(c.get("events", [])) for c in manifest["clips"]),
         },
         "provenance": provenance(base_url),
+        # Offline analyses that informed the verdict travel with the numbers.
+        "offline_sweeps": {
+            label: json.loads(path.read_text())
+            for label, path in (sweeps or {}).items()
+        },
         "runs": {},
     }
     for label, path in runs.items():
@@ -126,14 +131,22 @@ def main():
     p.add_argument("--verdict")
     p.add_argument("--iou", type=float, default=0.3)
     p.add_argument("--base-url", default="http://127.0.0.1:8078")
+    p.add_argument("--sweep", action="append", default=[], metavar="LABEL=PATH")
     a = p.parse_args()
-    runs = {}
-    for item in a.run:
-        if "=" not in item:
-            p.error("--run expects LABEL=PATH")
-        label, path = item.split("=", 1)
-        runs[label] = Path(path)
-    record = build(a.manifest, runs, a.purpose, a.verdict, a.iou, a.base_url)
+
+    def pairs(items):
+        out = {}
+        for item in items:
+            if "=" not in item:
+                p.error("expected LABEL=PATH")
+            label, path = item.split("=", 1)
+            out[label] = Path(path)
+        return out
+
+    runs = pairs(a.run)
+    record = build(
+        a.manifest, runs, a.purpose, a.verdict, a.iou, a.base_url, pairs(a.sweep)
+    )
     a.out.parent.mkdir(parents=True, exist_ok=True)
     a.out.write_text(json.dumps(record, indent=1) + "\n")
     print(f"wrote {a.out}")

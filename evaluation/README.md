@@ -75,6 +75,21 @@ separated from the variant that produced it, and a run with zero events still
 records what produced the zero. Prediction files written before this existed
 simply report `"run": null`. A manifest may not use `run` as a clip ID.
 
+## Post-processing sweeps
+
+`merge_sweep.py` re-scores a recorded prediction file under different event-merge
+gaps without running inference, so a post-processing choice can be compared
+deterministically and without GPU time:
+
+```bash
+.venv/bin/python evaluation/merge_sweep.py datasets/uca-development-v3.json \
+  runs/focus-off-2-predictions.json --gaps 0 0.5 1 2 4 --out runs/merge-sweep.json
+```
+
+It re-groups events the model already produced. It cannot show what a different
+setting would have made the model say, so a candidate that looks good here still
+needs a live run before any default changes.
+
 ## Recording a run
 
 After replay and scoring, generate the machine-readable record that the

@@ -241,6 +241,22 @@ class RecordRunTests(unittest.TestCase):
         self.assertIs(record["provenance"]["models"], None)
         self.assertFalse(record["provenance"]["camera_accessed"])
 
+    def test_offline_sweeps_are_embedded_in_the_record(self):
+        sweep_path = self.temp / "sweep.json"
+        sweep_path.write_text(json.dumps({"rows": [{"gap_s": 1, "candidates": 7}]}))
+        record = build(
+            self.manifest,
+            {"control": self.predictions("r.json", [])},
+            "p",
+            None,
+            0.3,
+            None,
+            {"dev": sweep_path},
+        )
+        self.assertEqual(
+            record["offline_sweeps"]["dev"]["rows"][0]["candidates"], 7
+        )
+
     def test_clip_summary_excludes_run_metadata(self):
         path = self.predictions("q.json", [])
         summary = clip_summary(json.loads(path.read_text()))
