@@ -100,11 +100,17 @@ class Store:
             CREATE TABLE IF NOT EXISTS videos (id TEXT PRIMARY KEY,name TEXT,created_at TEXT,captured_at TEXT,timezone TEXT,duration_s REAL,status TEXT,error TEXT,path TEXT,frame_path TEXT,scene_status TEXT DEFAULT 'empty',scene_approved INTEGER DEFAULT 0,regions TEXT DEFAULT '[]',schedule TEXT,scene_error TEXT,scene_version INTEGER DEFAULT 0);
             CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY,video_id TEXT,type TEXT,status TEXT,progress INTEGER,stage TEXT,error TEXT,created_at TEXT,updated_at TEXT,cancelled INTEGER DEFAULT 0);
             CREATE TABLE IF NOT EXISTS events (id TEXT PRIMARY KEY,video_id TEXT,start_s REAL,end_s REAL,action TEXT,description TEXT,evidence TEXT,uncertainty TEXT,track_ids TEXT,review_status TEXT DEFAULT 'unreviewed',pinned INTEGER DEFAULT 0,correction TEXT DEFAULT '',clip_path TEXT,model TEXT,config_version TEXT);
-            CREATE TABLE IF NOT EXISTS analysis_windows (job_id TEXT,video_id TEXT,window_index INTEGER,start_s REAL,end_s REAL,frame_count INTEGER,status TEXT,candidate_count INTEGER DEFAULT 0,PRIMARY KEY(job_id,window_index));
+            CREATE TABLE IF NOT EXISTS analysis_windows (job_id TEXT,video_id TEXT,window_index INTEGER,start_s REAL,end_s REAL,frame_count INTEGER,status TEXT,candidate_count INTEGER DEFAULT 0,model TEXT,config_version TEXT,PRIMARY KEY(job_id,window_index));
             CREATE TABLE IF NOT EXISTS candidate_traces (id TEXT PRIMARY KEY,job_id TEXT,video_id TEXT,window_index INTEGER,start_s REAL,end_s REAL,action TEXT,description TEXT,evidence TEXT,uncertainty TEXT,decision TEXT,reason TEXT,model TEXT,config_version TEXT,created_at TEXT);
             CREATE INDEX IF NOT EXISTS candidate_traces_video_job ON candidate_traces(video_id,job_id,window_index);
             CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY,event_id TEXT UNIQUE,created_at TEXT,status TEXT,action TEXT);
             """)
+            columns = {
+                row[1] for row in c.execute("PRAGMA table_info(analysis_windows)")
+            }
+            for column in ("model", "config_version"):
+                if column not in columns:
+                    c.execute(f"ALTER TABLE analysis_windows ADD COLUMN {column} TEXT")
             # An interrupted process cannot leave a job permanently processing.
             c.execute(
                 "UPDATE jobs SET status='queued', stage='recovered', updated_at=? WHERE status='processing' AND cancelled=0",
@@ -667,6 +673,11 @@ class BehaviorWorker:
                 )
             else:
                 self.store.run(
+                    "UPDATE analysis_windows SET status='error' "
+                    "WHERE job_id=? AND status NOT IN ('done','error')",
+                    (jid,),
+                )
+                self.store.run(
                     "UPDATE videos SET status='error',error=? WHERE id=?",
                     (str(e), j["video_id"]),
                 )
@@ -803,6 +814,13 @@ class BehaviorWorker:
                 progress=5 + int(80 * n / max(1, len(windows))),
             )
             folder = self.store.frames / f"{v['id']}-{n}"
+            model_name = getattr(self.analyzer, "model_name", "unknown")
+            self.store.run(
+                "INSERT OR REPLACE INTO analysis_windows "
+                "(job_id,video_id,window_index,start_s,end_s,frame_count,status,candidate_count,model,config_version) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (j["id"], v["id"], n, start, end, 0, "sampling", 0, model_name, CONFIG_VERSION),
+            )
             frames = self.analyzer.frames(path, folder, start, end)
             if not frames:
                 raise RuntimeError(
@@ -815,8 +833,9 @@ class BehaviorWorker:
                 from .views import context_detail_frames
                 frames = context_detail_frames(frames, window_tracks)
             self.store.run(
-                "INSERT OR REPLACE INTO analysis_windows (job_id,video_id,window_index,start_s,end_s,frame_count,status,candidate_count) VALUES (?,?,?,?,?,?,?,0)",
-                (j["id"], v["id"], n, start, end, len(frames), "inference"),
+                "UPDATE analysis_windows SET frame_count=?,status='inference' "
+                "WHERE job_id=? AND window_index=?",
+                (len(frames), j["id"], n),
             )
             try:
                 with self.model_lock:

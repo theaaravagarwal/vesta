@@ -114,6 +114,54 @@ class MetricsTests(unittest.TestCase):
         self.assertEqual(r["precision"], 1)
         self.assertEqual(r["mean_start_error_s"], 0)
 
+    def test_clip_outcomes_and_coverage_keep_missing_failed_and_unreviewed_visible(self):
+        m = self.manifest()
+        m["clips"].extend(
+            [
+                dict(m["clips"][0], id="missing", duration_s=30),
+                dict(m["clips"][0], id="failed", duration_s=20),
+                dict(m["clips"][0], id="unknown", duration_s=10, label_status="unreviewed"),
+            ]
+        )
+        r = score(
+            m,
+            {
+                "a": {"status": "done", "events": m["clips"][0]["events"]},
+                "failed": {"status": "error", "events": [], "elapsed_s": 2},
+                "unknown": {"status": "done", "events": []},
+            },
+        )
+        outcomes = {row["id"]: row for row in r["clip_outcomes"]}
+        self.assertEqual(outcomes["a"]["status"], "reviewed_successful")
+        self.assertEqual(outcomes["a"]["true_positive"], 1)
+        self.assertEqual(outcomes["missing"]["status"], "missing")
+        self.assertEqual(outcomes["failed"]["status"], "failed")
+        self.assertEqual(outcomes["unknown"]["status"], "unreviewed")
+        self.assertEqual(r["coverage"]["reviewed_successful"], {"clips": 1, "seconds": 60.0})
+        self.assertEqual(r["coverage"]["missing"], {"clips": 1, "seconds": 30.0})
+        self.assertEqual(r["coverage"]["failed"], {"clips": 1, "seconds": 20.0})
+        self.assertEqual(r["coverage"]["unreviewed"], {"clips": 1, "seconds": 10.0})
+        self.assertEqual(r["processing"]["elapsed_s_total"], 2)
+
+    def test_ordinary_false_alert_rate_uses_successful_reviewed_seconds(self):
+        ordinary = dict(self.manifest()["clips"][0], id="ordinary", duration_s=30, events=[])
+        m = {"schema_version": 1, "clips": [ordinary]}
+        r = score(m, {"ordinary": {"status": "done", "events": [{"action": "walking", "start_s": 1, "end_s": 2}]}})
+        self.assertEqual(r["ordinary_reviewed_successful_clips"], 1)
+        self.assertEqual(r["ordinary_reviewed_successful_seconds"], 30)
+        self.assertEqual(r["ordinary_false_alerts"], 1)
+        self.assertAlmostEqual(r["ordinary_false_alerts_per_video_hour"], 120)
+
+    def test_ordinary_rate_has_no_exposure_when_no_successful_ordinary_clip(self):
+        r = score(self.manifest(), {"a": {"status": "done", "events": []}})
+        self.assertEqual(r["ordinary_reviewed_successful_seconds"], 0)
+        self.assertIsNone(r["ordinary_false_alerts_per_video_hour"])
+        self.assertNotIn("processing", r)
+
+    def test_elapsed_bool_is_not_a_processing_measurement(self):
+        r = score(self.manifest(), {"a": {"status": "done", "events": [], "elapsed_s": True}})
+        self.assertNotIn("processing", r)
+
 
 class MergeSweepTests(unittest.TestCase):
     """Offline re-merge must not invent or lose matched events."""

@@ -3,6 +3,8 @@ import tempfile
 import unittest
 import os
 import json
+import sqlite3
+from contextlib import closing
 from pathlib import Path
 from unittest.mock import patch
 from evaluation.export_candidates import export as export_candidates
@@ -481,6 +483,67 @@ class BehaviorTests(unittest.TestCase):
         self.assertEqual(trace["windows"][0]["frame_count"], 1)
         self.assertEqual([c["decision"] for c in trace["candidates"]], ["rejected", "accepted"])
         self.assertEqual(trace["candidates"][0]["reason"], "no_specific_physical_incident")
+
+    def _analysis_job(self, analyzer, duration=12.0):
+        source = self.store.media / "v.mp4"
+        source.write_bytes(b"media")
+        self.video()
+        self.store.run("UPDATE videos SET path=?,duration_s=? WHERE id='v'", (str(source), duration))
+        self.store.run("INSERT INTO jobs VALUES ('j','v','analysis','queued',0,'queued',NULL,'now','now',0)")
+        return BehaviorWorker(self.store, analyzer)
+
+    def test_old_analysis_window_schema_migrates_twice_and_preserves_row(self):
+        root = self.temp / "old-store"
+        root.mkdir()
+        db = root / "behavior.sqlite3"
+        conn = sqlite3.connect(db)
+        conn.execute("CREATE TABLE analysis_windows (job_id TEXT,video_id TEXT,window_index INTEGER,start_s REAL,end_s REAL,frame_count INTEGER,status TEXT,candidate_count INTEGER DEFAULT 0,PRIMARY KEY(job_id,window_index))")
+        conn.execute("INSERT INTO analysis_windows VALUES ('j','v',0,0,1,2,'done',0)")
+        conn.commit(); conn.close()
+        Store(root)
+        Store(root)
+        with closing(sqlite3.connect(db)) as conn:
+            row = conn.execute("SELECT frame_count,status,candidate_count,model,config_version FROM analysis_windows").fetchone()
+        self.assertEqual(row, (2, "done", 0, None, None))
+
+    def test_sampler_failure_creates_error_window_with_zero_frames(self):
+        class SamplerFailure(FakeAnalyzer):
+            def frames(self, *args):
+                raise RuntimeError("sampler exploded")
+        worker = self._analysis_job(SamplerFailure())
+        worker.run_job("j")
+        row = self.store.one("SELECT status,frame_count FROM analysis_windows WHERE job_id='j'")
+        self.assertEqual(tuple(row), ("error", 0))
+
+    def test_malformed_model_output_marks_current_window_and_preserves_done_window(self):
+        sampled = self.temp / "sample.jpg"
+        sampled.write_bytes(b"frame")
+        class Malformed(FakeAnalyzer):
+            def frames(self, *args):
+                return [sampled]
+            def infer(self, *args):
+                if args[1] < 1:
+                    return []
+                return [{}]
+        worker = self._analysis_job(Malformed())
+        worker.run_job("j")
+        rows = self.store.all("SELECT window_index,status,candidate_count FROM analysis_windows ORDER BY window_index")
+        self.assertEqual([tuple(row) for row in rows], [(0, "done", 0), (1, "error", 1)])
+
+    def test_zero_candidate_window_records_model_and_config_provenance(self):
+        sampled = self.temp / "sample.jpg"
+        sampled.write_bytes(b"frame")
+        class Empty(FakeAnalyzer):
+            model_name = "provenance-model"
+            def frames(self, *args):
+                return [sampled]
+        worker = self._analysis_job(Empty(), duration=8.0)
+        worker.run_job("j")
+        row = self.store.one("SELECT status,candidate_count,model,config_version FROM analysis_windows")
+        self.assertEqual(row[0], "done")
+        self.assertEqual(row[1], 0)
+        self.assertEqual(row[2], "provenance-model")
+        self.assertEqual(row[3], behavior.CONFIG_VERSION)
 
     def test_focus_frames_reach_inference_and_are_explained_to_the_model(self):
         source = self.store.media / "v.mp4"

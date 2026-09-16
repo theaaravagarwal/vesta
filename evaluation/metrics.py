@@ -84,6 +84,16 @@ def validate_manifest(manifest):
 
 
 def score(manifest, predictions, threshold=0.3, ignore_action=False):
+    """Score predictions and report event, footage-coverage, and timing metrics.
+
+    Event metrics are conditional on reviewed clips whose prediction completed
+    successfully. ``clip_outcomes`` and ``coverage`` keep missing, failed, and
+    unreviewed footage visible instead of treating it as safe footage. Ordinary
+    false alerts use only successful reviewed clips with no labeled events; the
+    corresponding rate is per video hour, with its denominator exposed as
+    ``ordinary_reviewed_successful_seconds``. Processing summaries are emitted
+    only when predictions contain finite, non-negative ``elapsed_s`` values.
+    """
     validate_manifest(manifest)
     expected_ids = {c["id"] for c in manifest["clips"]}
     # ``run`` carries model/config provenance written by replay.py; it is echoed
@@ -98,19 +108,65 @@ def score(manifest, predictions, threshold=0.3, ignore_action=False):
     seconds = 0.0
     errors, unreviewed, missing, evaluated = [], [], [], []
     start_errors, end_errors = [], []
+    clip_outcomes = []
+    ordinary_seconds = 0.0
+    ordinary_clips = 0
+    ordinary_fp = 0
+    elapsed_values = []
+    coverage = {
+        "reviewed_successful": {"clips": 0, "seconds": 0.0},
+        "failed": {"clips": 0, "seconds": 0.0},
+        "missing": {"clips": 0, "seconds": 0.0},
+        "unreviewed": {"clips": 0, "seconds": 0.0},
+    }
     for clip in manifest["clips"]:
         cid = clip["id"]
         reviewed = clip["label_status"] == "reviewed"
+        duration = clip.get("duration_s")
+        duration_valid = isinstance(duration, (int, float)) and math.isfinite(duration) and duration > 0
+        outcome = {
+            "id": cid,
+            "label_status": clip["label_status"],
+            "duration_s": duration if duration_valid else None,
+            "status": None,
+            "true_positive": None,
+            "false_positive": None,
+            "false_negative": None,
+        }
         if not reviewed:
             unreviewed.append(cid)
+            coverage["unreviewed"]["clips"] += 1
+            if duration_valid:
+                coverage["unreviewed"]["seconds"] += duration
         prediction = predictions.get(cid)
+        if prediction is not None:
+            elapsed = prediction.get("elapsed_s")
+            if (
+                isinstance(elapsed, (int, float))
+                and not isinstance(elapsed, bool)
+                and math.isfinite(elapsed)
+                and elapsed >= 0
+            ):
+                elapsed_values.append(elapsed)
         if prediction is None:
             missing.append(cid)
+            outcome["status"] = "missing"
+            coverage["missing"]["clips"] += 1
+            if duration_valid:
+                coverage["missing"]["seconds"] += duration
+            clip_outcomes.append(outcome)
             continue
         if prediction.get("status") != "done":
             errors.append(cid)
+            outcome["status"] = "failed"
+            coverage["failed"]["clips"] += 1
+            if duration_valid:
+                coverage["failed"]["seconds"] += duration
+            clip_outcomes.append(outcome)
             continue
         if not reviewed:
+            outcome["status"] = "unreviewed"
+            clip_outcomes.append(outcome)
             continue
         events = prediction.get("events", [])
         for event in events:
@@ -124,6 +180,13 @@ def score(manifest, predictions, threshold=0.3, ignore_action=False):
         tp += len(pairs)
         fp += len(events) - len(pairs)
         fn += len(truth) - len(pairs)
+        outcome.update(
+            status="reviewed_successful",
+            true_positive=len(pairs),
+            false_positive=len(events) - len(pairs),
+            false_negative=len(truth) - len(pairs),
+        )
+        clip_outcomes.append(outcome)
         if not ignore_action:
             for action in sorted({e["action"] for e in truth + events}):
                 stats = by_action.setdefault(
@@ -140,10 +203,16 @@ def score(manifest, predictions, threshold=0.3, ignore_action=False):
                 )
         seconds += clip["duration_s"]
         evaluated.append(cid)
+        coverage["reviewed_successful"]["clips"] += 1
+        coverage["reviewed_successful"]["seconds"] += clip["duration_s"]
+        if not truth:
+            ordinary_clips += 1
+            ordinary_seconds += clip["duration_s"]
+            ordinary_fp += len(events)
         for j, i in pairs:
             start_errors.append(abs(truth[j]["start_s"] - events[i]["start_s"]))
             end_errors.append(abs(truth[j]["end_s"] - events[i]["end_s"]))
-    return {
+    result = {
         "run": run,
         "by_action": by_action,
         "matching_mode": "action_agnostic_temporal"
@@ -158,6 +227,12 @@ def score(manifest, predictions, threshold=0.3, ignore_action=False):
         "precision_wilson_95": wilson(tp, tp + fp),
         "recall_wilson_95": wilson(tp, tp + fn),
         "false_alerts_per_video_hour": fp / (seconds / 3600) if seconds else None,
+        "ordinary_false_alerts": ordinary_fp,
+        "ordinary_false_alerts_per_video_hour": ordinary_fp / (ordinary_seconds / 3600)
+        if ordinary_seconds
+        else None,
+        "ordinary_reviewed_successful_clips": ordinary_clips,
+        "ordinary_reviewed_successful_seconds": ordinary_seconds,
         "mean_start_error_s": sum(start_errors) / len(start_errors)
         if start_errors
         else None,
@@ -167,6 +242,15 @@ def score(manifest, predictions, threshold=0.3, ignore_action=False):
         "unreviewed_clips": unreviewed,
         "missing_predictions": missing,
         "failed_predictions": errors,
+        "clip_outcomes": clip_outcomes,
+        "coverage": coverage,
         "complete": not missing and not errors and not unreviewed,
         "note": "Conditional on successfully analyzed, reviewed clips. Failures are not safe negatives. Wilson intervals treat events as independent; correlated camera/session data needs grouped analysis.",
     }
+    if elapsed_values:
+        result["processing"] = {
+            "clips_with_elapsed_s": len(elapsed_values),
+            "elapsed_s_total": sum(elapsed_values),
+            "elapsed_s_mean": sum(elapsed_values) / len(elapsed_values),
+        }
+    return result

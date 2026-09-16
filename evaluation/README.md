@@ -41,6 +41,32 @@ peak GPU memory and reviewer workload beside aggregate metrics. Run the previous
 repository baseline in an isolated checkout if comparing old prompts; never restore
 credential-bearing defaults into the active service.
 
+The evaluator also returns `clip_outcomes` with each clip's status, duration, and
+event counts, plus `coverage` counts and seconds for reviewed successful, failed,
+missing, and unreviewed footage. These coverage categories can overlap when an
+unreviewed clip also fails or has no prediction; that overlap keeps both facts
+visible. Failed, missing, and unreviewed footage is excluded from event and
+false-alert denominators.
+
+`ordinary_false_alerts_per_video_hour` measures alerts on reviewed clips with no
+labeled events, using only successfully analyzed ordinary footage. The result
+includes `ordinary_reviewed_successful_seconds`, the denominator used for that
+rate; it is null when there is no such exposure. If valid prediction records
+contain `elapsed_s`, `processing` summarizes that wall time across available
+records. It may include upload, queue, and processing time, so it is not an
+inference-latency or live-capacity measurement.
+
+For an explicitly selected offline spatial diagnostic, run the paired probe with
+the same 2 fps, at most 8-second input contract used by the analyzer:
+
+```bash
+.venv/bin/python -m evaluation.probe_views --video path/to/video.mp4 \
+  --start 12 --end 20 --focus-box 0.20 0.20 0.60 0.80 \
+  --output runs/spatial-probe.json
+```
+
+This is a diagnostic comparison, not a benchmark score or a production default.
+
 ## Learning
 
 Confirm/dismiss/correction metadata is retained as annotation candidates, never
