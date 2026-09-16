@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "flat-type-hierarchy",
+        "value": "*",
+        "files": [
+          "templates/review.html"
+        ],
+        "createdAt": "2026-09-16T19:48:55.558Z",
+        "reason": "Jinja url_for stylesheet link is not resolved by detector; actual CSS sets body 14px and h1 24px (1.71x)"
+      }
+    ]
+  }
+}
