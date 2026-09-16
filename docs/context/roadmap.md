@@ -16,7 +16,7 @@ Replace subjective intent/crime labels with observable events and camera-specifi
 
 ## 3. Bounded 4–8 camera pilot and durable processing
 
-Only after phase 2 passes, introduce isolated per-camera capture/inference workers, a durable queue, and durable metadata/database plus object storage with access control and retention/deletion policy. Backpressure, restart recovery, camera health, and audit trails are pilot requirements. Do not assume VRAM can be pooled across machines; benchmark actual placement and contention.
+The one-camera demo validates the review flow, not the final topology. Only after phase 2 passes, introduce stable camera IDs and per-camera scene/policy configuration, isolated camera capture, a shared durable inference queue on the compute host, and durable metadata/database plus object storage with access control and retention/deletion policy. Backpressure, restart recovery, camera health, and audit trails are pilot requirements. Do not assume VRAM can be pooled across machines; benchmark actual placement and contention.
 
 **Acceptance:** sustained and peak-load tests at the target camera count; queue age, dropped-frame rate, storage growth, restart recovery, GPU memory, and alert latency stay within pre-agreed bounds. Per-camera shadow metrics and human review remain within phase 2 limits.
 

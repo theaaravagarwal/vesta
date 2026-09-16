@@ -8,6 +8,7 @@
 - Do not assume cross-host GPU/VRAM pooling. Measure actual inference placement and contention before selecting a multi-camera design.
 - Frigate is an architectural/workflow reference, not a dependency decision.
 - Product scope clarified 2026-09-16: Vesta is a general AI-assisted, human-reviewed surveillance service. The current fence-facing camera and climbing clips are a diagnostic test case, not the default campus camera or the main event class. Most intended cameras will view relevant activity from roughly 50 ft or less; that is a planning assumption, not a measured image-quality guarantee. Camera-specific scene context and evaluation take priority over a universal fence rule.
+- Deployment shape clarified 2026-09-16: the first working demo uses one camera, but the product must serve a network of cameras with a shared review workflow and centralized compute. Future camera identity, scene policy, health, retention, and evaluation results must remain per camera; a single-camera demo must not be treated as the final architecture or proof of multi-camera capacity.
 
 ## Infrastructure provenance
 
