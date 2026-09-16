@@ -18,6 +18,14 @@ ssh -N -L 33263:127.0.0.1:33263 software@100.64.0.7
 # open http://127.0.0.1:33263/review
 ```
 
+To test with your computer's webcam, use **Test with your webcam** in the
+review queue. Choose **Open camera**, **Record**, **Stop**, preview the clip, then
+**Analyze recording**. The camera turns off when recording stops or you choose
+**Close camera**. Recording is limited to 60 seconds, has no audio, and is sent
+to the inference host only when you choose Analyze. Browser camera access
+requires the `127.0.0.1` address above (or HTTPS); a plain remote HTTP address
+will not work. This is clip review, not continuous live monitoring.
+
 For a separately configured machine, `./run.sh` starts the new review app on
 loopback. It requires FFmpeg/FFprobe, detector weights, and a configured local
 vision endpoint; see the [host runbook](docs/context/compute-host.md).

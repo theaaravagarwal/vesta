@@ -3,6 +3,7 @@
   const q = (selector, root = document) => root.querySelector(selector);
   const el = {
     uploadForm:q('#upload-form'), videoFile:q('#video-file'), uploadSubmit:q('#upload-submit'), videoList:q('#video-list'), videoCount:q('#video-count'),
+    webcamPreview:q('#webcam-preview'), webcamOpen:q('#webcam-open'), webcamClose:q('#webcam-close'), webcamRecord:q('#webcam-record'), webcamStop:q('#webcam-stop'), webcamAnalyze:q('#webcam-analyze'), webcamStatus:q('#webcam-status'),
     empty:q('#empty-stage'), detail:q('#detail-stage'), name:q('#video-name'), meta:q('#video-meta'), source:q('#source-video'), unavailable:q('#video-unavailable'), unavailableDetail:q('#video-unavailable-detail'),
     reanalyze:q('#reanalyze-button'), cancel:q('#cancel-button'), job:q('#job-panel'), jobTitle:q('#job-title'), jobStage:q('#job-stage'), jobProgress:q('#job-progress'), jobPercent:q('#job-percent'), jobError:q('#job-error'),
     timeline:q('#timeline'), timelineHint:q('#timeline-hint'), timelineDuration:q('#timeline-duration'), events:q('#event-list'), storage:q('#storage-banner'), storageCopy:q('#storage-copy'), system:q('#system-state'),
@@ -11,6 +12,7 @@
   };
   const state = { videos:[], selectedId:null, detail:null, regions:[], selectedRegionId:null, drawing:null, sceneDirty:false, correctionDrafts:new Map(), media:{id:null,ready:false,error:false,retriedReady:false}, poll:null, requestId:0, frameLoadedFor:null };
   const active = new Set(['queued','processing']);
+  const webcam = {stream:null, recorder:null, chunks:[], file:null, url:null, timer:null, startedAt:null};
 
   function formatDate(value) { if (!value) return 'Capture time unknown'; const date = new Date(value); return Number.isNaN(date.valueOf()) ? 'Capture time unknown' : date.toLocaleString([], {dateStyle:'medium',timeStyle:'short'}); }
   function formatSeconds(seconds) { if (!Number.isFinite(Number(seconds))) return '—'; const total = Math.max(0, Math.round(Number(seconds))); const m = Math.floor(total / 60); const s = total % 60; return `${m}:${String(s).padStart(2,'0')}`; }
@@ -59,9 +61,63 @@
   async function refreshDetail() { if (!state.selectedId) return; const token=++state.requestId; try{const detail=await api(`/api/videos/${encodeURIComponent(state.selectedId)}`);if(token!==state.requestId||detail.video.id!==state.selectedId)return;state.detail=detail;renderDetail(detail,true);renderVideos();startPollingIfNeeded();}catch(err){message(apiError(err,'Unable to refresh video'),true);} }
   function stopPolling(){if(state.poll){clearTimeout(state.poll);state.poll=null;}}
   function startPollingIfNeeded(){stopPolling();if(!isActiveDetail(state.detail))return;state.poll=window.setTimeout(async()=>{await refreshDetail();},1800);}
+  function webcamMessage(text) { setText(el.webcamStatus,text); }
+  function releaseWebcam() { if(webcam.stream){webcam.stream.getTracks().forEach(track=>track.stop());webcam.stream=null;} el.webcamPreview.srcObject=null; }
+  function clearWebcamRecording() { webcam.file=null; if(webcam.url){URL.revokeObjectURL(webcam.url);webcam.url=null;} el.webcamAnalyze.hidden=true; }
+  async function openWebcam() {
+    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder){webcamMessage('Webcam recording requires a supported browser on localhost or HTTPS.');return;}
+    el.webcamOpen.disabled=true;
+    try {
+      clearWebcamRecording();
+      webcam.stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},frameRate:{ideal:15}},audio:false});
+      el.webcamPreview.hidden=false;el.webcamPreview.controls=false;el.webcamPreview.muted=true;el.webcamPreview.autoplay=true;el.webcamPreview.srcObject=webcam.stream;
+      await el.webcamPreview.play();
+      el.webcamOpen.hidden=true;el.webcamClose.hidden=false;el.webcamRecord.hidden=false;
+      webcamMessage('Camera is on. Choose Record when ready.');
+    } catch(err) { releaseWebcam();webcamMessage(`Camera unavailable: ${apiError(err,'check browser permission and try again.')}`); }
+    finally { el.webcamOpen.disabled=false; }
+  }
+  function closeWebcam(){if(webcam.recorder){stopWebcamRecording();return;}releaseWebcam();el.webcamClose.hidden=true;el.webcamRecord.hidden=true;el.webcamOpen.hidden=false;el.webcamPreview.hidden=true;webcamMessage('Camera is off.');}
+  function startWebcamRecording() {
+    if(!webcam.stream || webcam.recorder)return;
+    const mime=['video/webm;codecs=vp8','video/webm','video/mp4'].find(type=>MediaRecorder.isTypeSupported(type));
+    if(!mime){webcamMessage('This browser does not support a recording format the service accepts.');return;}
+    clearWebcamRecording();webcam.chunks=[];webcam.startedAt=new Date();
+    try { webcam.recorder=new MediaRecorder(webcam.stream,{mimeType:mime}); }
+    catch(err) { webcamMessage(`Recording unavailable: ${apiError(err,'try another browser.')}`);return; }
+    webcam.recorder.ondataavailable=event=>{if(event.data && event.data.size)webcam.chunks.push(event.data);};
+    webcam.recorder.onerror=()=>{webcamMessage('Recording failed. Please try again.');stopWebcamRecording();};
+    webcam.recorder.onstop=()=>{
+      if(webcam.timer){clearTimeout(webcam.timer);webcam.timer=null;}
+      const type=webcam.recorder.mimeType || mime;
+      const blob=new Blob(webcam.chunks,{type});
+      webcam.recorder=null;webcam.chunks=[];releaseWebcam();
+      el.webcamRecord.hidden=true;el.webcamStop.hidden=true;el.webcamClose.hidden=true;el.webcamOpen.hidden=false;
+      if(!blob.size){webcamMessage('No video was recorded. Try again.');return;}
+      const ext=type.startsWith('video/mp4')?'mp4':'webm';
+      webcam.file=new File([blob],`webcam-${webcam.startedAt.toISOString().replace(/[:.]/g,'-')}.${ext}`,{type});
+      webcam.url=URL.createObjectURL(webcam.file);el.webcamPreview.src=webcam.url;el.webcamPreview.controls=true;el.webcamPreview.muted=false;el.webcamPreview.autoplay=false;el.webcamPreview.load();el.webcamAnalyze.hidden=false;
+      webcamMessage(`Recording ready (${Math.max(1,Math.round(blob.size/1024))} KB). Review it, then choose Analyze recording.`);
+    };
+    try { webcam.recorder.start(1000); }
+    catch(err) { webcam.recorder=null;webcamMessage(`Recording could not start: ${apiError(err,'try again.')}`);return; }
+    el.webcamRecord.hidden=true;el.webcamClose.hidden=true;el.webcamStop.hidden=false;
+    webcam.timer=setTimeout(stopWebcamRecording,60000);webcamMessage('Recording… choose Stop, or recording ends after 60 seconds.');
+  }
+  function stopWebcamRecording(){if(webcam.recorder && webcam.recorder.state!=='inactive')webcam.recorder.stop();}
+  async function analyzeWebcamRecording(){
+    if(!webcam.file)return;
+    const form=new FormData();form.set('video',webcam.file);
+    form.set('captured_at',webcam.startedAt.toISOString());
+    const zone=Intl.DateTimeFormat().resolvedOptions().timeZone;if(zone)form.set('timezone',zone);
+    el.webcamAnalyze.disabled=true;el.webcamAnalyze.textContent='Uploading…';
+    try {const data=await api('/api/videos',{method:'POST',body:form});webcamMessage('Webcam clip uploaded. Analysis is queued.');message('Webcam clip uploaded and analysis queued.');el.webcamPreview.pause();el.webcamPreview.removeAttribute('src');el.webcamPreview.hidden=true;clearWebcamRecording();await loadVideos();if(data.video&&data.video.id)await selectVideo(data.video.id);await loadSystem();}
+    catch(err){webcamMessage(apiError(err,'Unable to upload webcam recording.'));message(apiError(err,'Unable to upload webcam recording.'),true);}
+    finally{el.webcamAnalyze.disabled=false;el.webcamAnalyze.textContent='Analyze recording';}
+  }
   async function upload(event) { event.preventDefault(); const file=el.videoFile.files[0]; if(!file){message('Choose a video before uploading.',true);return;} const form=new FormData(el.uploadForm); const capturedAt=q('#captured-at').value.trim(); const tz=q('#timezone').value.trim(); if(capturedAt && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/.test(capturedAt)){message('Capture time must be ISO 8601 with an offset, for example 2026-09-15T19:00:00-07:00.',true);return;} if(!capturedAt) form.delete('captured_at'); else form.set('captured_at',capturedAt); if(!tz) form.delete('timezone'); el.uploadSubmit.disabled=true;el.uploadSubmit.textContent='Uploading…'; try{const data=await api('/api/videos',{method:'POST',headers:{},body:form});message('Video uploaded and analysis queued.');el.uploadForm.reset();await loadVideos();const id=data.video&&data.video.id;if(id)await selectVideo(id);await loadSystem();}catch(err){message(apiError(err,'Unable to upload video'),true);}finally{el.uploadSubmit.disabled=false;el.uploadSubmit.textContent='Upload and analyze';} }
   async function cancelAnalysis(){if(!state.selectedId)return;try{el.cancel.disabled=true;await api(`/api/videos/${encodeURIComponent(state.selectedId)}/cancel`,{method:'POST'});message('Analysis cancellation requested.');await refreshDetail();await loadVideos();}catch(err){message(apiError(err,'Unable to cancel analysis'),true);}finally{el.cancel.disabled=false;}}
   async function reanalyze(){if(!state.selectedId)return;try{el.reanalyze.disabled=true;await api(`/api/videos/${encodeURIComponent(state.selectedId)}/analyze`,{method:'POST'});message('Reanalysis queued.');await refreshDetail();await loadVideos();}catch(err){message(apiError(err,'Unable to queue reanalysis'),true);}finally{el.reanalyze.disabled=false;}}
-  el.source.addEventListener('error',()=>{if(el.source.dataset.videoId===String(state.selectedId)){state.media.error=true;el.unavailable.hidden=false;setText(el.unavailableDetail,'Source playback is preparing. It will retry when normalized media is ready.');}});el.source.addEventListener('loadeddata',()=>{if(el.source.dataset.videoId===String(state.selectedId)){state.media.error=false;el.unavailable.hidden=true;}});el.uploadForm.addEventListener('submit',upload);el.cancel.addEventListener('click',cancelAnalysis);el.reanalyze.addEventListener('click',reanalyze);el.suggest.addEventListener('click',suggestScene);el.newRegion.addEventListener('click',()=>startDrawing('new'));el.redraw.addEventListener('click',()=>startDrawing('redraw'));el.sceneSvg.addEventListener('click',addDrawingPoint);el.sceneSvg.addEventListener('dblclick',event=>{if(state.drawing){event.preventDefault();finishDrawing();}});el.scheduleEnable.addEventListener('change',()=>{state.sceneDirty=true;el.scheduleInputs.hidden=!el.scheduleEnable.checked});el.scheduleStart.addEventListener('input',()=>state.sceneDirty=true);el.scheduleEnd.addEventListener('input',()=>state.sceneDirty=true);el.scheduleTz.addEventListener('input',()=>state.sceneDirty=true);el.saveScene.addEventListener('click',saveScene);window.addEventListener('keydown',event=>{if(event.key==='Escape'&&state.drawing){state.drawing=null;showSceneMessage('Drawing cancelled.',false);renderPolygons();}});
+  el.source.addEventListener('error',()=>{if(el.source.dataset.videoId===String(state.selectedId)){state.media.error=true;el.unavailable.hidden=false;setText(el.unavailableDetail,'Source playback is preparing. It will retry when normalized media is ready.');}});el.source.addEventListener('loadeddata',()=>{if(el.source.dataset.videoId===String(state.selectedId)){state.media.error=false;el.unavailable.hidden=true;}});el.uploadForm.addEventListener('submit',upload);el.webcamOpen.addEventListener('click',openWebcam);el.webcamClose.addEventListener('click',closeWebcam);el.webcamRecord.addEventListener('click',startWebcamRecording);el.webcamStop.addEventListener('click',stopWebcamRecording);el.webcamAnalyze.addEventListener('click',analyzeWebcamRecording);window.addEventListener('beforeunload',()=>{releaseWebcam();clearWebcamRecording();});el.cancel.addEventListener('click',cancelAnalysis);el.reanalyze.addEventListener('click',reanalyze);el.suggest.addEventListener('click',suggestScene);el.newRegion.addEventListener('click',()=>startDrawing('new'));el.redraw.addEventListener('click',()=>startDrawing('redraw'));el.sceneSvg.addEventListener('click',addDrawingPoint);el.sceneSvg.addEventListener('dblclick',event=>{if(state.drawing){event.preventDefault();finishDrawing();}});el.scheduleEnable.addEventListener('change',()=>{state.sceneDirty=true;el.scheduleInputs.hidden=!el.scheduleEnable.checked});el.scheduleStart.addEventListener('input',()=>state.sceneDirty=true);el.scheduleEnd.addEventListener('input',()=>state.sceneDirty=true);el.scheduleTz.addEventListener('input',()=>state.sceneDirty=true);el.saveScene.addEventListener('click',saveScene);window.addEventListener('keydown',event=>{if(event.key==='Escape'&&state.drawing){state.drawing=null;showSceneMessage('Drawing cancelled.',false);renderPolygons();}});
   Promise.all([loadSystem(),loadOutbox(),loadVideos()]);
 })();

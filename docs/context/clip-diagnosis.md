@@ -37,6 +37,11 @@ and the wrongly named UCA access-interaction candidates. These are offline
 post-processing comparisons; a fresh full replay is needed to measure the
 deployed end-to-end behavior and false-negative tradeoff.
 
+The deployed `temporal-v3-bounded-evidence2` variant was then replayed end to
+end on the same `uca-05` ordinary clip and the Mobius clip: both jobs completed,
+with **zero** and **two `climbing`** alerts respectively. This is a two-clip
+smoke test, not a broad false-positive or recall estimate.
+
 Before camera integration, use a small held-out set with frame-accurate visible
 action labels and ordinary controls from the intended camera geometry. Record
 false alerts per camera-hour and exact action recall, and review cropped-edge
