@@ -13,6 +13,7 @@ readable as what was true then.
 | 2026-09-15 | [Six-clip baseline](#baseline-results--2026-09-15) | `temporal-v2-schema`, 3B | Immutable reference | [uca-baseline.json](benchmarks/uca-baseline.json) |
 | 2026-09-15 | [observable-v3 candidates](#rejected-detection-experiment--observable-v3) | `temporal-v3-actions`, 3B and 7B | Not promoted | [v3-comparison.json](benchmarks/v3-comparison.json) |
 | 2026-09-15 | [Focus-view comparison](#result--focus-views-not-promoted-2026-09-15) | `temporal-v3-bounded` with and without focus | Not promoted | [focus-comparison.json](benchmarks/focus-comparison.json) |
+| 2026-09-15 | [Event merge gap](#event-merge-gap--2026-09-15) | `temporal-v3-bounded` with and without a 1s merge gap | Recommended, not yet defaulted | [merge-gap.json](benchmarks/merge-gap.json) |
 
 No run in this table establishes accuracy on the target camera. All of them use
 small, selected public clips.
@@ -263,3 +264,52 @@ Two observations follow, both consistent with the six-clip baseline:
 
 Neither observation is a campus-readiness measurement, and no threshold, model or
 prompt change is justified by three previously inspected development clips.
+
+## Event merge gap — 2026-09-15
+
+[Machine-readable record](benchmarks/merge-gap.json), including both offline
+sweeps.
+
+Analysis windows overlap, so one continuous action is described once per window.
+`_merge` joined only candidates whose spans overlapped, which left sequences like
+`access_interaction 33.0-33.5`, `34.0-34.5`, `35.0-35.5` standing as three
+separate alerts for what the frames show as one action. `BEHAVIOR_MERGE_GAP_S`
+joins the same action across a short gap. It defaults to `0`, the previous
+behavior, and appears in the config version when set, for example
+`temporal-v3-bounded-gap1`.
+
+**Offline evidence (controlled).** `evaluation/merge_sweep.py` re-merges and
+re-scores the events a recorded run already produced, so no inference runs and
+model sampling cannot move the result. On the recorded control run over the three
+development clips:
+
+| Gap | Candidates | Exact-action TP | Agnostic TP | Agnostic FP | Agnostic precision | Agnostic recall |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0s | 18 | 0 | 3 | 15 | 16.7% | 100% |
+| 0.5s | 7 | 0 | 3 | 4 | 42.9% | 100% |
+| 1s | 7 | 0 | 3 | 4 | 42.9% | 100% |
+| 2s | 7 | 0 | 3 | 4 | 42.9% | 100% |
+| 4s | 7 | 0 | 3 | 4 | 42.9% | 100% |
+
+Eleven of eighteen candidates were duplicate descriptions of an action already
+reported, and no labeled event lost its match at any gap. The result is flat from
+0.5s to 4s, which is what sub-second window fragments predict; `1` is chosen as
+the smallest value clear of that boundary, not as a tuned optimum. Re-running the
+same sweep over the immutable six-clip baseline changes nothing at any gap: that
+run produced no fragmented candidates, so the change removes duplicates where
+they occur and is inert where they do not.
+
+**Live confirmation (not controlled).** A fresh run with
+`BEHAVIOR_MERGE_GAP_S=1.0` completed all three clips and produced 7 candidates:
+3 agnostic true positives, 4 false positives, precision 42.9%, recall 100%, and
+1 exact-action true positive. Sampling is not deterministic and this run is a
+different sample from the control, so its agreement with the offline sweep is
+supporting evidence, not a second measurement. The exact-action match is the
+first recorded on these clips and is not attributed to this change.
+
+**Scope.** This removes duplicate reports of one action. It does not make the
+model notice anything it missed, and it does not fix the action vocabulary: the
+ordinary walking clip still produced an alert, and exact-action matching remains
+near zero. Three development clips cannot establish an operational false-alert
+rate. Production default stays `0` until this is confirmed on source videos that
+were not used to find the problem.

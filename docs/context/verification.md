@@ -74,3 +74,17 @@ state in which the failure repeated on every request.
 Not established: any accuracy, capacity or readiness claim. Two clips and three
 labeled events decided nothing about spatial crops; the exact-action failure and
 the alert volume are unresolved.
+
+## Event merge gap — 2026-09-15
+
+Offline sweep over recorded predictions and one live host run; see the
+[public benchmark](public-benchmark.md) and
+[record](benchmarks/merge-gap.json). Duplicate candidates for a single action
+fell from 18 to 7 on the development clips with no labeled event losing its
+match, and the same sweep over the six-clip baseline changed nothing.
+48 unit/API/evaluation/documentation tests pass locally and on the host.
+
+Not established: any change in what the model detects, the action-labelling
+failure, or an operational false-alert rate. The production default remains
+`BEHAVIOR_MERGE_GAP_S=0`; promoting it needs source videos that were not used to
+find the problem.

@@ -1,0 +1,494 @@
+{
+ "date": "2026-09-16",
+ "purpose": "Event merge gap: joining one action reported across overlapping windows",
+ "verdict": "Recommended for production; offline sweep on the recorded control shows fewer duplicate candidates with no matched events lost",
+ "temporal_iou_threshold": 0.3,
+ "manifest": {
+  "path": "datasets/uca-development-v3.json",
+  "sha256": "e88221ad04e618744112fc59b9a868822da4546ab47cc6ea664ef647596322bb",
+  "clips": [
+   "uca-01",
+   "uca-04",
+   "uca-05"
+  ],
+  "labeled_events": 3
+ },
+ "provenance": {
+  "git_head": "229756995180a418942fef3f0929610042317902",
+  "git_dirty": false,
+  "source_sha256": {
+   "behavior/__init__.py": "5142dc2260b6a26ec875d5fa919439b561fa6c24219db81792314148685dea36",
+   "behavior/views.py": "f5cc051e94d3d60d10c0a25ca09074b08e8a22bb828315d1488f238e65a4ca47",
+   "evaluation/metrics.py": "185198956f75c6ea89af5d65b4909f1cbc4770cdcd3e4b876d8ab782ab289045"
+  },
+  "gpu": "NVIDIA GeForce RTX 4090 Laptop GPU, 16376 MiB, 595.84",
+  "models": {
+   "qwen2.5vl:7b": {
+    "digest": "5ced39dfa4bac325dc183dd1e4febaa1c46b3ea28bce48896c8e69c1e79611cc",
+    "size_bytes": 5969245856
+   },
+   "qwen2.5vl:3b": {
+    "digest": "fb90415cde1ef08aa669ae74b082d49b158729b6db1ab183c941417d507e71a1",
+    "size_bytes": 3200627168
+   }
+  },
+  "camera_accessed": false
+ },
+ "offline_sweeps": {
+  "dev-clips": {
+   "manifest": "datasets/uca-development-v3.json",
+   "predictions": "runs/focus-off-2-predictions.json",
+   "temporal_iou_threshold": 0.3,
+   "note": "Offline re-merge of recorded events; no inference was run.",
+   "rows": [
+    {
+     "gap_s": 0,
+     "candidates": 18,
+     "action_aware_true_positive": 0,
+     "action_agnostic_true_positive": 3,
+     "action_agnostic_false_positive": 15,
+     "action_agnostic_precision": 0.16666666666666666,
+     "action_agnostic_recall": 1.0,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-04",
+      "uca-05"
+     ],
+     "failed_predictions": []
+    },
+    {
+     "gap_s": 0.5,
+     "candidates": 7,
+     "action_aware_true_positive": 0,
+     "action_agnostic_true_positive": 3,
+     "action_agnostic_false_positive": 4,
+     "action_agnostic_precision": 0.42857142857142855,
+     "action_agnostic_recall": 1.0,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-04",
+      "uca-05"
+     ],
+     "failed_predictions": []
+    },
+    {
+     "gap_s": 1,
+     "candidates": 7,
+     "action_aware_true_positive": 0,
+     "action_agnostic_true_positive": 3,
+     "action_agnostic_false_positive": 4,
+     "action_agnostic_precision": 0.42857142857142855,
+     "action_agnostic_recall": 1.0,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-04",
+      "uca-05"
+     ],
+     "failed_predictions": []
+    },
+    {
+     "gap_s": 2,
+     "candidates": 7,
+     "action_aware_true_positive": 0,
+     "action_agnostic_true_positive": 3,
+     "action_agnostic_false_positive": 4,
+     "action_agnostic_precision": 0.42857142857142855,
+     "action_agnostic_recall": 1.0,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-04",
+      "uca-05"
+     ],
+     "failed_predictions": []
+    },
+    {
+     "gap_s": 4,
+     "candidates": 7,
+     "action_aware_true_positive": 0,
+     "action_agnostic_true_positive": 3,
+     "action_agnostic_false_positive": 4,
+     "action_agnostic_precision": 0.42857142857142855,
+     "action_agnostic_recall": 1.0,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-04",
+      "uca-05"
+     ],
+     "failed_predictions": []
+    }
+   ]
+  },
+  "six-clip-baseline": {
+   "manifest": "datasets/uca-demo/manifest.json",
+   "predictions": "runs/uca-predictions.json",
+   "temporal_iou_threshold": 0.3,
+   "note": "Offline re-merge of recorded events; no inference was run.",
+   "rows": [
+    {
+     "gap_s": 0,
+     "candidates": 6,
+     "action_aware_true_positive": 0,
+     "action_agnostic_true_positive": 1,
+     "action_agnostic_false_positive": 5,
+     "action_agnostic_precision": 0.16666666666666666,
+     "action_agnostic_recall": 0.14285714285714285,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-02",
+      "uca-03",
+      "uca-05",
+      "uca-06"
+     ],
+     "failed_predictions": [
+      "uca-04"
+     ]
+    },
+    {
+     "gap_s": 0.5,
+     "candidates": 6,
+     "action_aware_true_positive": 0,
+     "action_agnostic_true_positive": 1,
+     "action_agnostic_false_positive": 5,
+     "action_agnostic_precision": 0.16666666666666666,
+     "action_agnostic_recall": 0.14285714285714285,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-02",
+      "uca-03",
+      "uca-05",
+      "uca-06"
+     ],
+     "failed_predictions": [
+      "uca-04"
+     ]
+    },
+    {
+     "gap_s": 1,
+     "candidates": 6,
+     "action_aware_true_positive": 0,
+     "action_agnostic_true_positive": 1,
+     "action_agnostic_false_positive": 5,
+     "action_agnostic_precision": 0.16666666666666666,
+     "action_agnostic_recall": 0.14285714285714285,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-02",
+      "uca-03",
+      "uca-05",
+      "uca-06"
+     ],
+     "failed_predictions": [
+      "uca-04"
+     ]
+    },
+    {
+     "gap_s": 2,
+     "candidates": 6,
+     "action_aware_true_positive": 0,
+     "action_agnostic_true_positive": 1,
+     "action_agnostic_false_positive": 5,
+     "action_agnostic_precision": 0.16666666666666666,
+     "action_agnostic_recall": 0.14285714285714285,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-02",
+      "uca-03",
+      "uca-05",
+      "uca-06"
+     ],
+     "failed_predictions": [
+      "uca-04"
+     ]
+    },
+    {
+     "gap_s": 4,
+     "candidates": 6,
+     "action_aware_true_positive": 0,
+     "action_agnostic_true_positive": 1,
+     "action_agnostic_false_positive": 5,
+     "action_agnostic_precision": 0.16666666666666666,
+     "action_agnostic_recall": 0.14285714285714285,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-02",
+      "uca-03",
+      "uca-05",
+      "uca-06"
+     ],
+     "failed_predictions": [
+      "uca-04"
+     ]
+    }
+   ]
+  }
+ },
+ "runs": {
+  "control-gap0": {
+   "predictions_path": "runs/focus-off-2-predictions.json",
+   "run": {
+    "started_at": "2026-09-16T00:06:39Z",
+    "manifest": "datasets/uca-development-v3.json",
+    "base_url": "http://127.0.0.1:33264",
+    "model": "qwen2.5vl:3b",
+    "config_version": "temporal-v3-bounded"
+   },
+   "clips": {
+    "uca-01": {
+     "status": "done",
+     "candidate_count": 2,
+     "elapsed_s": 24.205,
+     "error": null
+    },
+    "uca-04": {
+     "status": "done",
+     "candidate_count": 11,
+     "elapsed_s": 110.233,
+     "error": null
+    },
+    "uca-05": {
+     "status": "done",
+     "candidate_count": 5,
+     "elapsed_s": 38.143,
+     "error": null
+    }
+   },
+   "metrics": {
+    "action_aware": {
+     "run": {
+      "started_at": "2026-09-16T00:06:39Z",
+      "manifest": "datasets/uca-development-v3.json",
+      "base_url": "http://127.0.0.1:33264",
+      "model": "qwen2.5vl:3b",
+      "config_version": "temporal-v3-bounded"
+     },
+     "by_action": {
+      "access_interaction": {
+       "true_positive": 0,
+       "false_positive": 10,
+       "false_negative": 0
+      },
+      "climbing": {
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 1
+      },
+      "object_tampering": {
+       "true_positive": 0,
+       "false_positive": 1,
+       "false_negative": 2
+      },
+      "boundary_entry": {
+       "true_positive": 0,
+       "false_positive": 1,
+       "false_negative": 0
+      },
+      "other_observable_event": {
+       "true_positive": 0,
+       "false_positive": 6,
+       "false_negative": 0
+      }
+     },
+     "matching_mode": "action_aware_temporal",
+     "temporal_iou_threshold": 0.3,
+     "true_positive": 0,
+     "false_positive": 18,
+     "false_negative": 3,
+     "precision": 0.0,
+     "recall": 0.0,
+     "precision_wilson_95": [
+      0,
+      0.1758845505823749
+     ],
+     "recall_wilson_95": [
+      0,
+      0.5615060804490177
+     ],
+     "false_alerts_per_video_hour": 700.5403663521251,
+     "mean_start_error_s": null,
+     "mean_end_error_s": null,
+     "evaluated_seconds": 92.500023,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-04",
+      "uca-05"
+     ],
+     "unreviewed_clips": [],
+     "missing_predictions": [],
+     "failed_predictions": [],
+     "complete": true,
+     "note": "Conditional on successfully analyzed, reviewed clips. Failures are not safe negatives. Wilson intervals treat events as independent; correlated camera/session data needs grouped analysis."
+    },
+    "action_agnostic": {
+     "run": {
+      "started_at": "2026-09-16T00:06:39Z",
+      "manifest": "datasets/uca-development-v3.json",
+      "base_url": "http://127.0.0.1:33264",
+      "model": "qwen2.5vl:3b",
+      "config_version": "temporal-v3-bounded"
+     },
+     "by_action": {},
+     "matching_mode": "action_agnostic_temporal",
+     "temporal_iou_threshold": 0.3,
+     "true_positive": 3,
+     "false_positive": 15,
+     "false_negative": 0,
+     "precision": 0.16666666666666666,
+     "recall": 1.0,
+     "precision_wilson_95": [
+      0.05836470400465757,
+      0.39222499638359243
+     ],
+     "recall_wilson_95": [
+      0.43849391955098227,
+      1
+     ],
+     "false_alerts_per_video_hour": 583.7836386267709,
+     "mean_start_error_s": 3.033333333333333,
+     "mean_end_error_s": 1.6333333333333335,
+     "evaluated_seconds": 92.500023,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-04",
+      "uca-05"
+     ],
+     "unreviewed_clips": [],
+     "missing_predictions": [],
+     "failed_predictions": [],
+     "complete": true,
+     "note": "Conditional on successfully analyzed, reviewed clips. Failures are not safe negatives. Wilson intervals treat events as independent; correlated camera/session data needs grouped analysis."
+    }
+   }
+  },
+  "live-gap1": {
+   "predictions_path": "runs/gap1-predictions.json",
+   "run": {
+    "started_at": "2026-09-16T00:22:17Z",
+    "manifest": "datasets/uca-development-v3.json",
+    "base_url": "http://127.0.0.1:33264",
+    "model": "qwen2.5vl:3b",
+    "config_version": "temporal-v3-bounded-gap1"
+   },
+   "clips": {
+    "uca-01": {
+     "status": "done",
+     "candidate_count": 2,
+     "elapsed_s": 24.125,
+     "error": null
+    },
+    "uca-04": {
+     "status": "done",
+     "candidate_count": 4,
+     "elapsed_s": 108.247,
+     "error": null
+    },
+    "uca-05": {
+     "status": "done",
+     "candidate_count": 1,
+     "elapsed_s": 38.133,
+     "error": null
+    }
+   },
+   "metrics": {
+    "action_aware": {
+     "run": {
+      "started_at": "2026-09-16T00:22:17Z",
+      "manifest": "datasets/uca-development-v3.json",
+      "base_url": "http://127.0.0.1:33264",
+      "model": "qwen2.5vl:3b",
+      "config_version": "temporal-v3-bounded-gap1"
+     },
+     "by_action": {
+      "climbing": {
+       "true_positive": 0,
+       "false_positive": 0,
+       "false_negative": 1
+      },
+      "object_tampering": {
+       "true_positive": 1,
+       "false_positive": 0,
+       "false_negative": 1
+      },
+      "other_observable_event": {
+       "true_positive": 0,
+       "false_positive": 4,
+       "false_negative": 0
+      },
+      "access_interaction": {
+       "true_positive": 0,
+       "false_positive": 2,
+       "false_negative": 0
+      }
+     },
+     "matching_mode": "action_aware_temporal",
+     "temporal_iou_threshold": 0.3,
+     "true_positive": 1,
+     "false_positive": 6,
+     "false_negative": 2,
+     "precision": 0.14285714285714285,
+     "recall": 0.3333333333333333,
+     "precision_wilson_95": [
+      0.02567895594897479,
+      0.51313450331903
+     ],
+     "recall_wilson_95": [
+      0.0614903152761605,
+      0.7923450448735121
+     ],
+     "false_alerts_per_video_hour": 233.51345545070836,
+     "mean_start_error_s": 2.4000000000000004,
+     "mean_end_error_s": 1.0999999999999996,
+     "evaluated_seconds": 92.500023,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-04",
+      "uca-05"
+     ],
+     "unreviewed_clips": [],
+     "missing_predictions": [],
+     "failed_predictions": [],
+     "complete": true,
+     "note": "Conditional on successfully analyzed, reviewed clips. Failures are not safe negatives. Wilson intervals treat events as independent; correlated camera/session data needs grouped analysis."
+    },
+    "action_agnostic": {
+     "run": {
+      "started_at": "2026-09-16T00:22:17Z",
+      "manifest": "datasets/uca-development-v3.json",
+      "base_url": "http://127.0.0.1:33264",
+      "model": "qwen2.5vl:3b",
+      "config_version": "temporal-v3-bounded-gap1"
+     },
+     "by_action": {},
+     "matching_mode": "action_agnostic_temporal",
+     "temporal_iou_threshold": 0.3,
+     "true_positive": 3,
+     "false_positive": 4,
+     "false_negative": 0,
+     "precision": 0.42857142857142855,
+     "recall": 1.0,
+     "precision_wilson_95": [
+      0.15821692226262685,
+      0.7495457695909742
+     ],
+     "recall_wilson_95": [
+      0.43849391955098227,
+      1
+     ],
+     "false_alerts_per_video_hour": 155.67563696713893,
+     "mean_start_error_s": 3.033333333333333,
+     "mean_end_error_s": 1.6333333333333335,
+     "evaluated_seconds": 92.500023,
+     "evaluated_clips": [
+      "uca-01",
+      "uca-04",
+      "uca-05"
+     ],
+     "unreviewed_clips": [],
+     "missing_predictions": [],
+     "failed_predictions": [],
+     "complete": true,
+     "note": "Conditional on successfully analyzed, reviewed clips. Failures are not safe negatives. Wilson intervals treat events as independent; correlated camera/session data needs grouped analysis."
+    }
+   }
+  }
+ }
+}
