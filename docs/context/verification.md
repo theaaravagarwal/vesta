@@ -56,3 +56,21 @@ production, and the failures recorded in the [public benchmark](public-benchmark
 are unchanged. What changed is that the spatial-crop hypothesis can now be tested
 without simultaneously changing the event prompt.
 
+## Focus-view comparison executed — 2026-09-15
+
+Run on the primary compute host against the three development clips, control
+first, isolated experiment runtimes, production database and web service
+untouched. Both variants completed; focus views were **not promoted** and remain
+disabled in production. Counts, artifacts and caveats are in the
+[public benchmark](public-benchmark.md).
+
+Newly established by this run: the `malformed JSON` job failures are at least
+partly a server-side constrained-decoding exception (`Unexpected empty grammar
+stack`) on long image-sequence requests, returned with HTTP 200, not only output
+truncation as previously supposed. Vesta surfaced every instance as an explicit
+job error and never as an empty result. A restart of `vesta-inference` cleared a
+state in which the failure repeated on every request.
+
+Not established: any accuracy, capacity or readiness claim. Two clips and three
+labeled events decided nothing about spatial crops; the exact-action failure and
+the alert volume are unresolved.

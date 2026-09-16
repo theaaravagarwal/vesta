@@ -8,6 +8,12 @@ persists jobs, events, scene edits, review corrections and the notification outb
 The worker normalizes media, tracks people, and analyzes every overlapping temporal
 window using structured candidate-event output. Failed analysis remains explicit.
 
+The event prompt policy (`BEHAVIOR_EVENT_POLICY`) and the spatial focus view
+(`BEHAVIOR_FOCUS_VIEW`) are independent settings. Production runs `baseline` with
+focus off; every event and `GET /api/system` record the resulting config version,
+and replay artifacts record the serving model and config version so a run with no
+events still states what produced none.
+
 The public MEVA smoke set is available on the compute host; target-camera footage
 and held-out behavior labels remain unavailable. Do not infer accuracy from a
 completed job. See [verification](verification.md), [host runbook](compute-host.md),

@@ -167,3 +167,81 @@ Compare against a `BEHAVIOR_FOCUS_VIEW=0` run in a separate runtime directory
 with the same model digest. Three previously inspected development clips cannot
 promote a variant; a candidate that survives this comparison needs different
 source videos before any production change.
+
+### First attempt — server-side constrained-decoding failure
+
+The first comparison run (2026-09-15, 17:01–17:05 host time, `qwen2.5vl:3b`,
+three development clips per variant) did not produce a usable control. With focus
+views on, `uca-01` and `uca-04` completed and `uca-05` failed; with focus views
+off, all three clips failed. Every failure was the same explicit job error:
+`event model response failed (attempt=1, model=qwen2.5vl:3b,
+finish_reason=unknown): malformed JSON`.
+
+The cause is in the inference server, not in Vesta. `journalctl --user -u
+vesta-inference` recorded `got exception: Unexpected empty grammar stack after
+accepting piece` on a request with 23,346 context tokens, after which the server
+returned HTTP 200 with a body the client could not parse. A schema-constrained
+text-only request to the same endpoint immediately afterwards succeeded, so
+JSON-schema decoding is not broken in general; the observed failures were on the
+long image-sequence requests. This is the same failure family as the
+`incomplete JSON` job in the six-clip baseline above, which was previously
+attributed to plausible output truncation. That attribution now looks incomplete:
+at least one such failure is a grammar exception, not a token budget.
+
+Why the control failed on all three clips while the focus run failed on one is
+not established. The failures are adjacent in time, which is consistent with
+server state persisting across requests, but nothing here measures that, and the
+ordering was not randomized. The variant is not a demonstrated cause.
+
+Restarting `vesta-inference` cleared the condition. Failed artifacts are retained
+on the host as `runs/focus-{on,off}-predictions.json` and
+`runs/focus-{on,off}-server.log`; the retry uses the `-2` suffix and runs the
+control first. A failed job is never scored as a safe negative, so no metrics
+were produced from this attempt.
+
+### Result — focus views not promoted (2026-09-15)
+
+Retry from a restarted inference service, application commit `31bd835`,
+`qwen2.5vl:3b`, development clips only, control run first. Artifacts on the host
+are `runs/focus-{off,on}-2-{predictions,exact,agnostic}.json`.
+
+The control completed all three clips. The focus run failed `uca-05` with the
+same constrained-decoding exception described above, logged twice at 17:11:55 at
+23,725 context tokens, inside the focus window; the control window logged none.
+`uca-05` has now failed under focus views in both attempts. That is a
+correlation across two runs, not a demonstrated cause.
+
+Like-for-like on the two clips both variants completed (`uca-01`, `uca-04`;
+72.392 seconds; three labeled events):
+
+| | Candidates | Exact TP/FP/FN | Agnostic TP/FP/FN | Agnostic precision | Agnostic recall |
+| --- | ---: | --- | --- | ---: | ---: |
+| Control `temporal-v3-bounded` | 13 | 0 / 13 / 3 | 3 / 10 / 0 | 23.1% | 100% |
+| Focus `temporal-v3-bounded-focus` | 8 | 0 / 8 / 3 | 1 / 7 / 2 | 12.5% | 33.3% |
+
+Focus views are **not promoted**. They matched fewer labeled events and scored
+lower precision than the control, while also losing a clip to an inference
+failure. Production keeps `BEHAVIOR_FOCUS_VIEW=0`. The spatial-scale explanation
+for the wide-view misses is not supported by this run, and is not refuted either:
+two clips and three labeled events cannot settle it, ordering was not randomized,
+each variant ran once, and sampling is not deterministic.
+
+The control is itself the first scored run of the current production
+configuration on these clips. Across all three control clips (92.500 seconds):
+0 true positives, 18 false positives and 3 false negatives under exact-action
+matching; 3 true positives and 15 false positives under action-agnostic matching,
+precision 16.7%. The ordinary walking clip produced 5 candidates from footage with
+no labeled events.
+
+Two observations follow, both consistent with the six-clip baseline:
+
+- **Action labelling, not temporal localization, is the visible failure.** Both
+  variants scored zero exact-action true positives while the control's
+  action-agnostic recall was 100%. Every match was found under the wrong action
+  name, and the control called almost everything `access_interaction`.
+- **Action-agnostic recall here is close to vacuous.** Thirteen candidates across
+  72 seconds will overlap nearly any labeled span. Read it beside the false-alert
+  count, never alone. Alert volume, not missed events, is what this run exposes.
+
+Neither observation is a campus-readiness measurement, and no threshold, model or
+prompt change is justified by three previously inspected development clips.

@@ -38,4 +38,5 @@ Repository behavior claims refer to the checked-out files and line references in
 - The isolated experiment app refuses to start without an explicit variant selection rather than inheriting production defaults.
 - Prediction artifacts carry the serving model and config version, so a run that produced no events still records the configuration that produced none.
 - Neither focus views nor any other candidate is promoted by these changes; production defaults are unchanged and the known detection failures remain unresolved.
+- Focus views were scored on 2026-09-15 and not promoted: fewer matched labeled events and lower precision than the control, plus one clip lost to an inference failure. `BEHAVIOR_FOCUS_VIEW=0` stays the production default and the code path stays available for further experiments.
 
