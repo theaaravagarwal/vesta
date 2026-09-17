@@ -27,6 +27,16 @@ class ReviewDashboardUiTests(unittest.TestCase):
         self.assertIn('id="test-export"', REVIEW_HTML)
         self.assertIn("result.passed===true?'passed':result.passed===false?'not passed':'unknown'", REVIEW_JS)
 
+    def test_remote_frame_errors_hide_images_and_valid_loads_restore_them(self):
+        self.assertNotIn('id="monitor-frame"', REVIEW_HTML)
+        self.assertNotIn('id="setup-reference-frame"', REVIEW_HTML)
+        self.assertIn("monitorFrame.addEventListener('error'", REVIEW_JS)
+        self.assertIn("setupReferenceFrame.addEventListener('error'", REVIEW_JS)
+        self.assertIn("Latest preview frame could not be loaded.", REVIEW_JS)
+        self.assertIn("Reference frame could not be loaded.", REVIEW_JS)
+        self.assertIn("setupReferenceFrame.addEventListener('load'", REVIEW_JS)
+        self.assertIn("renderLineDrawing();", REVIEW_JS)
+
 
 if __name__ == "__main__":
     unittest.main()
