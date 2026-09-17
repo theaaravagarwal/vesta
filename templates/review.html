@@ -27,27 +27,27 @@
         <p class="form-note" id="capture-note">Leave capture time blank when it is unknown.</p>
       </form>
       <section class="webcam-panel" aria-labelledby="webcam-heading">
-        <h2 id="webcam-heading">Test with your webcam</h2>
-        <p>Record a short clip here, then send it to the review service for analysis.</p>
+        <h2 id="webcam-heading">Test this device's camera</h2>
+        <p>This browser requests this device's camera only. The recorded clip is uploaded to Vesta for remote analysis; no analysis computer's camera is opened.</p>
         <video id="webcam-preview" class="webcam-preview" autoplay muted playsinline hidden aria-label="Webcam preview"></video>
         <div class="webcam-actions">
-          <button class="button secondary" id="webcam-open" type="button">Open camera</button>
+          <button class="button secondary" id="webcam-open" type="button">Open this device's camera</button>
           <button class="button secondary" id="webcam-close" type="button" hidden>Close camera</button>
           <button class="button primary" id="webcam-record" type="button" hidden>Record</button>
           <button class="button secondary" id="webcam-stop" type="button" hidden>Stop</button>
           <button class="button primary" id="webcam-analyze" type="button" hidden>Analyze recording</button>
         </div>
-        <p class="webcam-status" id="webcam-status" role="status">Camera access starts only when you choose Open camera. Record up to 60 seconds.</p>
+        <p class="webcam-status" id="webcam-status" role="status">This device's camera stays off until you choose Open this device's camera. Record up to 60 seconds.</p>
       </section>
       <section class="camera-monitor-panel" aria-labelledby="camera-monitor-heading">
-        <h2 id="camera-monitor-heading">Continuous camera</h2>
-        <p>With your consent, send short video-only chunks to the review queue. Capture never starts on page load.</p>
+        <h2 id="camera-monitor-heading">Monitor this device's camera</h2>
+        <p>With your consent, this browser sends short video-only chunks from this device to Vesta for remote analysis. Capture never starts on page load or on an analysis computer.</p>
         <video id="camera-monitor-preview" class="webcam-preview" autoplay muted playsinline hidden aria-label="Continuous camera preview"></video>
         <div class="webcam-actions">
-          <button class="button primary" id="camera-monitor-start" type="button">Start monitoring</button>
+          <button class="button primary" id="camera-monitor-start" type="button">Start monitoring this device</button>
           <button class="button danger ghost" id="camera-monitor-stop" type="button" hidden>Stop monitoring</button>
         </div>
-        <p class="webcam-status" id="camera-monitor-status" role="status">Camera is off. Start monitoring to request camera access.</p>
+        <p class="webcam-status" id="camera-monitor-status" role="status">This device's camera is off. Start monitoring this device to request camera access. Camera capture requires HTTPS, including the private Tailscale dashboard address, or localhost.</p>
       </section>
       <div class="video-list" id="video-list" aria-live="polite"></div>
     </aside>

@@ -21,6 +21,12 @@
   function formatSeconds(seconds) { if (!Number.isFinite(Number(seconds))) return '—'; const total = Math.max(0, Math.round(Number(seconds))); const m = Math.floor(total / 60); const s = total % 60; return `${m}:${String(s).padStart(2,'0')}`; }
   function message(text, error = false) { const node = document.createElement('div'); node.className = `toast${error ? ' error' : ''}`; node.textContent = text; el.toast.append(node); window.setTimeout(() => node.remove(), 4500); }
   function apiError(error, fallback) { return error && error.message ? error.message : fallback; }
+  function cameraCapturePrerequisite(label) {
+    if (!window.isSecureContext) return `${label} is unavailable because this page is not secure. Open the Vesta dashboard at its HTTPS Tailscale address (or localhost), then try again.`;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return `${label} requires a browser that supports camera access.`;
+    if (!window.MediaRecorder) return `${label} requires a browser that supports video recording.`;
+    return '';
+  }
   async function api(url, options = {}) { const response = await fetch(url, {headers:{Accept:'application/json', ...(options.headers || {})}, ...options}); let body = null; try { body = await response.json(); } catch (_) { /* source endpoints do not return JSON */ } if (!response.ok) { const error = new Error((body && body.error) || `Request failed (${response.status})`); error.status=response.status; error.retryAfter=Number((body && body.retry_after_s) || response.headers.get('Retry-After') || 0); throw error; } return body; }
   function setText(node, text) { node.textContent = text || ''; }
   function clear(node) { node.replaceChildren(); }
@@ -68,7 +74,7 @@
   function releaseWebcam() { if(webcam.stream){webcam.stream.getTracks().forEach(track=>track.stop());webcam.stream=null;} el.webcamPreview.srcObject=null; }
   function clearWebcamRecording() { webcam.file=null; if(webcam.url){URL.revokeObjectURL(webcam.url);webcam.url=null;} el.webcamAnalyze.hidden=true; }
   async function openWebcam() {
-    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder){webcamMessage('Webcam recording requires a supported browser on localhost or HTTPS.');return;}
+    const prerequisite=cameraCapturePrerequisite('This device\'s camera'); if(prerequisite){webcamMessage(prerequisite);return;}
     el.webcamOpen.disabled=true;
     try {
       clearWebcamRecording();
@@ -76,11 +82,11 @@
       el.webcamPreview.hidden=false;el.webcamPreview.controls=false;el.webcamPreview.muted=true;el.webcamPreview.autoplay=true;el.webcamPreview.srcObject=webcam.stream;
       await el.webcamPreview.play();
       el.webcamOpen.hidden=true;el.webcamClose.hidden=false;el.webcamRecord.hidden=false;
-      webcamMessage('Camera is on. Choose Record when ready.');
-    } catch(err) { releaseWebcam();webcamMessage(`Camera unavailable: ${apiError(err,'check browser permission and try again.')}`); }
+      webcamMessage('This device\'s camera is on. Choose Record when ready.');
+    } catch(err) { releaseWebcam();webcamMessage(`This device\'s camera is unavailable: ${apiError(err,'check this browser\'s camera permission and try again.')}`); }
     finally { el.webcamOpen.disabled=false; }
   }
-  function closeWebcam(){if(webcam.recorder){stopWebcamRecording();return;}releaseWebcam();el.webcamClose.hidden=true;el.webcamRecord.hidden=true;el.webcamOpen.hidden=false;el.webcamPreview.hidden=true;webcamMessage('Camera is off.');}
+  function closeWebcam(){if(webcam.recorder){stopWebcamRecording();return;}releaseWebcam();el.webcamClose.hidden=true;el.webcamRecord.hidden=true;el.webcamOpen.hidden=false;el.webcamPreview.hidden=true;webcamMessage('This device\'s camera is off.');}
   function startWebcamRecording() {
     if(!webcam.stream || webcam.recorder)return;
     const mime=['video/webm;codecs=vp8','video/webm','video/mp4'].find(type=>MediaRecorder.isTypeSupported(type));
@@ -173,7 +179,7 @@
   }
   async function startMonitor() {
     if(monitor.running) return;
-    if(!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || !window.MediaRecorder){monitorMessage('Continuous capture requires a supported browser on localhost or HTTPS.');return;}
+    const prerequisite=cameraCapturePrerequisite('Monitoring this device\'s camera'); if(prerequisite){monitorMessage(prerequisite);return;}
     const mime=['video/webm;codecs=vp8','video/webm','video/mp4'].find(type=>MediaRecorder.isTypeSupported(type));
     if(!mime){monitorMessage('Capture failed: this browser has no supported video recording format.');return;}
     el.cameraMonitorStart.disabled=true;
@@ -182,12 +188,12 @@
       monitor.cameraId=monitorCameraId(); monitor.sessionId=`sess_${crypto.randomUUID().replace(/-/g,'')}`; monitor.stopping=false; monitor.lost=false; monitor.running=true; monitor.paused=false;
       el.cameraMonitorPreview.hidden=false; el.cameraMonitorPreview.srcObject=monitor.stream; await el.cameraMonitorPreview.play();
       startMonitorChunk(); el.cameraMonitorStart.hidden=true; el.cameraMonitorStop.hidden=false;
-      monitorMessage('Monitoring is on. Video-only chunks are closed and sent about every 10 seconds; short rollover gaps can occur. Choose Stop to turn the camera off.');
-    } catch(err) { releaseMonitor(); monitor.running=false; monitorMessage(`Capture failed: ${apiError(err,'check camera permission and try again.')}`); }
+      monitorMessage('Monitoring is on for this device. Video-only chunks are closed and sent about every 10 seconds; short rollover gaps can occur. Choose Stop to turn this device\'s camera off.');
+    } catch(err) { releaseMonitor(); monitor.running=false; monitorMessage(`Capture failed for this device\'s camera: ${apiError(err,'check this browser\'s camera permission and try again.')}`); }
     finally { el.cameraMonitorStart.disabled=false; }
   }
   function releaseMonitor() { if(monitor.stream){monitor.stream.getTracks().forEach(track=>track.stop());monitor.stream=null;} el.cameraMonitorPreview.srcObject=null; }
-  function stopMonitor(reason='Monitoring stopped. Camera is off.') {
+  function stopMonitor(reason='Monitoring stopped. This device\'s camera is off.') {
     const unfinished=Boolean(monitor.inFlight || monitor.pending); monitor.running=false; monitor.stopping=true;
     if(monitor.retryTimer){clearTimeout(monitor.retryTimer);monitor.retryTimer=null;} if(monitor.chunkTimer){clearTimeout(monitor.chunkTimer);monitor.chunkTimer=null;} if(monitor.controller)monitor.controller.abort();
     if(monitor.recorder && monitor.recorder.state!=='inactive')monitor.recorder.stop(); releaseMonitor(); monitor.inFlight=null; monitor.pending=null; monitor.uploading=false; monitor.paused=false;

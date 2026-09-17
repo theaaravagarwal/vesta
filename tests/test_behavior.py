@@ -234,6 +234,89 @@ class BehaviorTests(unittest.TestCase):
         self.assertEqual(clip_response.status_code, 200)
         clip_response.close()
 
+    def test_tailscale_access_is_disabled_by_default_for_local_development(self):
+        self.assertEqual(self.client.get("/review").status_code, 200)
+
+    def test_tailscale_access_denies_missing_wrong_and_non_loopback_identity(self):
+        app = create_app(
+            {
+                "BEHAVIOR_STORE": Store(self.temp / "secured"),
+                "BEHAVIOR_ANALYZER": FakeAnalyzer(),
+                "BEHAVIOR_START_WORKER": False,
+                "BEHAVIOR_TAILSCALE_AUTH": True,
+                "BEHAVIOR_TAILSCALE_ALLOWED_LOGIN": "aarav",
+                "BEHAVIOR_TAILSCALE_CANONICAL_ORIGIN": "https://vesta.mesh.example",
+            }
+        )
+        client = app.test_client()
+        self.assertEqual(client.get("/review").status_code, 403)
+        self.assertEqual(
+            client.get("/review", headers={"Tailscale-User-Login": "someone-else"}).status_code,
+            403,
+        )
+        self.assertEqual(
+            client.get(
+                "/review",
+                headers={"Tailscale-User-Login": "aarav"},
+                environ_base={"REMOTE_ADDR": "100.64.0.2"},
+            ).status_code,
+            403,
+        )
+
+    def test_tailscale_access_allows_only_exact_identity_from_loopback_for_every_route(self):
+        app = create_app(
+            {
+                "BEHAVIOR_STORE": Store(self.temp / "secured-media"),
+                "BEHAVIOR_ANALYZER": FakeAnalyzer(),
+                "BEHAVIOR_START_WORKER": False,
+                "BEHAVIOR_TAILSCALE_AUTH": True,
+                "BEHAVIOR_TAILSCALE_ALLOWED_LOGIN": "aarav",
+                "BEHAVIOR_TAILSCALE_CANONICAL_ORIGIN": "https://vesta.mesh.example",
+            }
+        )
+        client = app.test_client()
+        headers = {"Tailscale-User-Login": "aarav"}
+        self.assertEqual(client.get("/review", headers=headers).status_code, 200)
+        # A missing identity is denied before a route can disclose whether its
+        # media object exists.
+        self.assertEqual(client.get("/api/videos/not-a-video/media").status_code, 403)
+        self.assertEqual(client.get("/api/videos/not-a-video/media", headers=headers).status_code, 404)
+
+    def test_tailscale_access_rejects_cross_origin_mutations_but_allows_authenticated_cli(self):
+        app = create_app(
+            {
+                "BEHAVIOR_STORE": Store(self.temp / "secured-origin"),
+                "BEHAVIOR_ANALYZER": FakeAnalyzer(),
+                "BEHAVIOR_START_WORKER": False,
+                "BEHAVIOR_TAILSCALE_AUTH": True,
+                "BEHAVIOR_TAILSCALE_ALLOWED_LOGIN": "aarav",
+                "BEHAVIOR_TAILSCALE_CANONICAL_ORIGIN": "https://vesta.mesh.example",
+            }
+        )
+        client = app.test_client()
+        headers = {"Tailscale-User-Login": "aarav"}
+        self.assertEqual(
+            client.post("/api/videos/not-a-video/cancel", headers={**headers, "Origin": "https://other.example"}).status_code,
+            403,
+        )
+        self.assertEqual(
+            client.post("/api/videos/not-a-video/cancel", headers={**headers, "Origin": "https://vesta.mesh.example"}).status_code,
+            404,
+        )
+        self.assertEqual(client.post("/api/videos/not-a-video/cancel", headers=headers).status_code, 404)
+
+    def test_tailscale_access_requires_complete_valid_production_configuration(self):
+        with self.assertRaisesRegex(ValueError, "ALLOWED_LOGIN"):
+            create_app({"BEHAVIOR_TAILSCALE_AUTH": True, "BEHAVIOR_START_WORKER": False})
+        with self.assertRaisesRegex(ValueError, "CANONICAL_ORIGIN"):
+            create_app(
+                {
+                    "BEHAVIOR_TAILSCALE_AUTH": True,
+                    "BEHAVIOR_TAILSCALE_ALLOWED_LOGIN": "aarav",
+                    "BEHAVIOR_START_WORKER": False,
+                }
+            )
+
     def test_cleanup_never_evicts_active_source(self):
         vid = self.video()
         source = self.temp / "a.mp4"

@@ -26,6 +26,7 @@ from flask import Blueprint, Flask, jsonify, redirect, request, send_file
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
+from .access import TailscaleAccess
 from .capture import CameraAdmissionFull, CameraQueue, CameraQueueLimits, validate_camera_id, validate_chunk_id, validate_session_id
 
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm"}
@@ -1161,6 +1162,7 @@ def _valid_scene(data):
 
 def create_app(config: dict | None = None) -> Flask:
     config = config or {}
+    access = TailscaleAccess.from_config(config)
     root = Path(config.get("BEHAVIOR_RUNTIME", Path("runtime") / "behavior"))
     store = config.get("BEHAVIOR_STORE") or Store(root)
     worker = BehaviorWorker(store, config.get("BEHAVIOR_ANALYZER"))
@@ -1176,7 +1178,15 @@ def create_app(config: dict | None = None) -> Flask:
         BEHAVIOR_STORE=store,
         BEHAVIOR_WORKER=worker,
         BEHAVIOR_CAMERA_QUEUE=camera_queue,
+        BEHAVIOR_TAILSCALE_ACCESS=access,
     )
+
+    @app.before_request
+    def require_tailscale_identity():
+        if access.denial_reason(request):
+            # Do not reveal whether a login header was absent, malformed, or
+            # simply belongs to a different tailnet user.
+            return json_error("not authorized", 403)
 
     @app.errorhandler(RequestEntityTooLarge)
     def too_large(_):

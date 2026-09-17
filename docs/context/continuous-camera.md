@@ -1,10 +1,26 @@
 # Continuous browser camera demo
 
 The review page has an opt-in, one-browser-camera demo. It is not a live alert
-or distributed-camera system. A reviewer must choose **Start monitoring** before
-the browser asks for video permission. Capture is video-only; no audio track is
-requested. **Stop monitoring**, page navigation, and recorder errors stop media
-tracks, recording timers, and pending retries.
+or distributed-camera system. The camera is always the camera attached to the
+device running the reviewer’s browser: `getUserMedia` executes in that browser,
+never on Vesta’s remote service or an analysis computer. A reviewer must choose
+**Start monitoring this device** before the browser asks for video permission.
+Capture is video-only; no audio track is requested. **Stop monitoring**, page
+navigation, and recorder errors stop media tracks, recording timers, and pending
+retries.
+
+The reviewer must open the dashboard from a secure browser context before the
+browser can ask for camera permission. Use the dashboard’s private HTTPS
+Tailscale address when accessing a remotely hosted dashboard (or `localhost`
+for local development). An insecure `http://` Tailscale URL shows a recovery
+message and makes no camera request. Captured chunks are uploaded to Vesta for
+analysis; this upload never activates a camera on the remote analysis host.
+
+The intended compute-host dashboard address is
+`https://software-legion-pro-7-16irx9h.mesh.chudmesh.duckdns.org/review`. It is
+usable for camera capture only after Tailscale HTTPS Serve and its certificate
+are enabled; it must proxy the remote service’s loopback port rather than expose
+a remote camera device.
 
 The browser creates a new recording about every 10 seconds from the same media
 stream. A new recording makes each submitted WebM independently decodable by

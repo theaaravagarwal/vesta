@@ -25,13 +25,21 @@ Runtime folders for uploads, outputs, recordings, caches, and Ultralytics settin
 
 `~/.config/vesta/host.env` is mode 600 and leaves the camera URL, discovery credentials, and camera context empty. It sets one YOLO frame worker, video batch size 4, and one LLM batch request to limit GPU contention. Do not put live camera credentials into tracked files.
 
-The web unit now runs `behavior:create_app()` as one Gunicorn process with eight threads on loopback port 33263. Access it through an SSH tunnel from the client:
+The web unit runs `behavior:create_app()` as one Gunicorn process with eight threads on loopback port 33263. Access it through an SSH tunnel from the client:
 
 ```bash
 ssh -N -L 33263:127.0.0.1:33263 software@100.64.0.7
 ```
 
 Then open `http://127.0.0.1:33263/review` locally.
+
+The planned private browser endpoint is Tailscale Serve HTTPS, but it is not
+currently enabled. The custom control plane does not advertise certificate
+domains, so plain HTTP Serve would not meet the browser secure-context
+requirement for camera capture. The exact access boundary, HTTPS blocker, and
+safe enable/rollback procedure are in
+[`tailscale-access.md`](tailscale-access.md). Keep the Gunicorn listener on
+loopback regardless of the chosen remote-access path.
 
 ## Verification and operation
 
