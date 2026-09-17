@@ -17,6 +17,8 @@ Frigate is a reference for event review, recording retention, and detection work
 
 - [Implementation API contract](implementation-contract.md)
 - [Continuous browser camera demo](continuous-camera.md)
+- [Inference reliability investigation](inference-reliability.md)
+- [Rejected door-contact validation experiment](door-event-validation.md)
 - [Evaluation tooling](../../evaluation/README.md)
 - [Accepted implementation plan](implementation-plan.md)
 - [Verification results and limitations](verification.md)
