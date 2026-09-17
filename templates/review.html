@@ -39,6 +39,16 @@
         </div>
         <p class="webcam-status" id="webcam-status" role="status">Camera access starts only when you choose Open camera. Record up to 60 seconds.</p>
       </section>
+      <section class="camera-monitor-panel" aria-labelledby="camera-monitor-heading">
+        <h2 id="camera-monitor-heading">Continuous camera</h2>
+        <p>With your consent, send short video-only chunks to the review queue. Capture never starts on page load.</p>
+        <video id="camera-monitor-preview" class="webcam-preview" autoplay muted playsinline hidden aria-label="Continuous camera preview"></video>
+        <div class="webcam-actions">
+          <button class="button primary" id="camera-monitor-start" type="button">Start monitoring</button>
+          <button class="button danger ghost" id="camera-monitor-stop" type="button" hidden>Stop monitoring</button>
+        </div>
+        <p class="webcam-status" id="camera-monitor-status" role="status">Camera is off. Start monitoring to request camera access.</p>
+      </section>
       <div class="video-list" id="video-list" aria-live="polite"></div>
     </aside>
 

@@ -5,7 +5,9 @@ import os
 import json
 import sqlite3
 from contextlib import closing
+from io import BytesIO
 from pathlib import Path
+from urllib.error import HTTPError
 from unittest.mock import patch
 from evaluation.export_candidates import export as export_candidates
 
@@ -122,6 +124,21 @@ class BehaviorTests(unittest.TestCase):
         with patch("urllib.request.urlopen", return_value=Response()):
             with self.assertRaisesRegex(RuntimeError, "malformed JSON"):
                 TemporalAnalyzer().infer([], 0, 8, {})
+
+    def test_inference_http_failure_preserves_server_status(self):
+        error = HTTPError("http://inference", 500, "Internal Server Error", {}, BytesIO())
+        with patch("urllib.request.urlopen", side_effect=error):
+            with self.assertRaisesRegex(RuntimeError, "attempt=1.*http_status=500.*HTTP 500"):
+                TemporalAnalyzer().infer([], 0, 8, {})
+
+    def test_inference_timeout_margin_is_bounded_and_configurable(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(TemporalAnalyzer._request_timeout_s(), 180)
+        with patch.dict(os.environ, {"BEHAVIOR_EVENT_REQUEST_TIMEOUT_S": "190"}):
+            self.assertEqual(TemporalAnalyzer._request_timeout_s(), 190)
+        with patch.dict(os.environ, {"BEHAVIOR_EVENT_REQUEST_TIMEOUT_S": "241"}):
+            with self.assertRaisesRegex(RuntimeError, "between 1 and 240"):
+                TemporalAnalyzer._request_timeout_s()
 
     def test_malformed_scene_rejected(self):
         self.video()

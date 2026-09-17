@@ -16,6 +16,7 @@ The default service is now an uploaded-video temporal behavior review workflow w
 Frigate is a reference for event review, recording retention, and detection workflows, not an adopted dependency or a commitment to replace this app. See [Frigate Review](https://docs.frigate.video/usage/review/) and [Frigate object detectors](https://docs.frigate.video/configuration/object_detectors/).
 
 - [Implementation API contract](implementation-contract.md)
+- [Continuous browser camera demo](continuous-camera.md)
 - [Evaluation tooling](../../evaluation/README.md)
 - [Accepted implementation plan](implementation-plan.md)
 - [Verification results and limitations](verification.md)

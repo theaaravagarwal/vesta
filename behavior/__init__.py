@@ -26,8 +26,12 @@ from flask import Blueprint, Flask, jsonify, redirect, request, send_file
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
+from .capture import CameraAdmissionFull, CameraQueue, CameraQueueLimits, validate_camera_id, validate_chunk_id, validate_session_id
+
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm"}
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
+MAX_CAMERA_CHUNK_BYTES = 128 * 1024 * 1024
+MAX_CAMERA_MULTIPART_OVERHEAD_BYTES = 128 * 1024
 WINDOW_S, STRIDE_S, SAMPLE_FPS = 8.0, 4.0, 2.0
 EVENT_POLICY = os.getenv("BEHAVIOR_EVENT_POLICY", "baseline")
 if EVENT_POLICY not in {"baseline", "observable-v3"}:
@@ -104,6 +108,10 @@ class Store:
             CREATE TABLE IF NOT EXISTS candidate_traces (id TEXT PRIMARY KEY,job_id TEXT,video_id TEXT,window_index INTEGER,start_s REAL,end_s REAL,action TEXT,description TEXT,evidence TEXT,uncertainty TEXT,decision TEXT,reason TEXT,model TEXT,config_version TEXT,created_at TEXT);
             CREATE INDEX IF NOT EXISTS candidate_traces_video_job ON candidate_traces(video_id,job_id,window_index);
             CREATE TABLE IF NOT EXISTS outbox (id TEXT PRIMARY KEY,event_id TEXT UNIQUE,created_at TEXT,status TEXT,action TEXT);
+            CREATE TABLE IF NOT EXISTS video_sources (video_id TEXT PRIMARY KEY,source_kind TEXT NOT NULL,camera_id TEXT,capture_session_id TEXT);
+            CREATE INDEX IF NOT EXISTS video_sources_camera ON video_sources(camera_id,capture_session_id);
+            CREATE TABLE IF NOT EXISTS camera_sources (camera_id TEXT PRIMARY KEY,created_at TEXT NOT NULL,last_received_at TEXT,last_error TEXT,last_session_id TEXT);
+            CREATE TABLE IF NOT EXISTS camera_chunk_receipts (camera_id TEXT NOT NULL,capture_session_id TEXT NOT NULL,chunk_id TEXT NOT NULL,video_id TEXT NOT NULL,job_id TEXT NOT NULL,received_at TEXT NOT NULL,PRIMARY KEY(camera_id,capture_session_id,chunk_id));
             """)
             columns = {
                 row[1] for row in c.execute("PRAGMA table_info(analysis_windows)")
@@ -160,6 +168,10 @@ class Store:
 
     def video(self, r):
         media_path = Path(r["path"])
+        source = self.one(
+            "SELECT source_kind,camera_id,capture_session_id FROM video_sources WHERE video_id=?",
+            (r["id"],),
+        )
         return {
             "id": r["id"],
             "name": r["name"],
@@ -174,6 +186,37 @@ class Store:
             and media_path.name == f"{r['id']}.mp4"
             and media_path.is_file(),
             "error": r["error"],
+            "source_kind": source["source_kind"] if source else "upload",
+            "camera_id": source["camera_id"] if source else None,
+            "capture_session_id": source["capture_session_id"] if source else None,
+        }
+
+    def camera(self, camera_id: str, stale_after_s: int = 45):
+        row = self.one("SELECT * FROM camera_sources WHERE camera_id=?", (camera_id,))
+        if not row:
+            return None
+        receipt = row["last_received_at"]
+        age_s = None
+        if receipt:
+            try:
+                age_s = max(0, (datetime.now(timezone.utc) - datetime.fromisoformat(receipt.replace("Z", "+00:00"))).total_seconds())
+            except ValueError:
+                receipt = None
+        health = "active" if receipt and age_s is not None and age_s <= stale_after_s else "stale"
+        inference_error = self.one(
+            "SELECT j.error FROM jobs j JOIN video_sources s ON s.video_id=j.video_id "
+            "WHERE s.camera_id=? AND j.type='analysis' AND j.status='error' "
+            "ORDER BY j.updated_at DESC LIMIT 1",
+            (camera_id,),
+        )
+        return {
+            "camera_id": row["camera_id"],
+            "created_at": row["created_at"],
+            "last_received_at": receipt,
+            "last_error": row["last_error"] or (inference_error[0] if inference_error else None),
+            "last_session_id": row["last_session_id"],
+            "health": health,
+            "stale_after_s": stale_after_s,
         }
 
     def scene(self, r):
@@ -265,8 +308,21 @@ class TemporalAnalyzer:
         "BEHAVIOR_VLM_BASE_URL", os.getenv("LLAMACPP_BASE_URL", "http://127.0.0.1:8078")
     ).rstrip("/")
 
+    @staticmethod
+    def _request_timeout_s() -> float:
+        """Read the finite event-request deadline without changing service state."""
+        raw = os.getenv("BEHAVIOR_EVENT_REQUEST_TIMEOUT_S", "180")
+        try:
+            timeout = float(raw)
+        except ValueError as exc:
+            raise RuntimeError("BEHAVIOR_EVENT_REQUEST_TIMEOUT_S must be a number") from exc
+        if not 1 <= timeout <= 240:
+            raise RuntimeError("BEHAVIOR_EVENT_REQUEST_TIMEOUT_S must be between 1 and 240")
+        return timeout
+
     def _request_events(self, payload: dict, token_budget: int, attempt: int) -> tuple[dict, str, str]:
         """Issue one structured request and retain only safe diagnostic metadata."""
+        import urllib.error
         import urllib.request
 
         request_payload = {**payload, "max_tokens": token_budget}
@@ -275,12 +331,19 @@ class TemporalAnalyzer:
             data=_json(request_payload).encode(),
             headers={"Content-Type": "application/json"},
         )
+        timeout = self._request_timeout_s()
         try:
-            with urllib.request.urlopen(req, timeout=180) as response:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
                 data = json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            raise RuntimeError(
+                f"event model request failed (attempt={attempt}, model={self.model_name}, "
+                f"http_status={exc.code}, finish_reason=unavailable): HTTP {exc.code}"
+            ) from exc
         except Exception as exc:
             raise RuntimeError(
-                f"event model request failed (attempt={attempt}, model={self.model_name}, finish_reason=unavailable): {exc}"
+                f"event model request failed (attempt={attempt}, model={self.model_name}, "
+                f"request_timeout_s={timeout:g}, finish_reason=unavailable): {exc}"
             ) from exc
         model = str(data.get("model") or self.model_name) if isinstance(data, dict) else self.model_name
         try:
@@ -1101,11 +1164,18 @@ def create_app(config: dict | None = None) -> Flask:
     root = Path(config.get("BEHAVIOR_RUNTIME", Path("runtime") / "behavior"))
     store = config.get("BEHAVIOR_STORE") or Store(root)
     worker = BehaviorWorker(store, config.get("BEHAVIOR_ANALYZER"))
+    camera_limits = CameraQueueLimits(
+        global_pending=int(config.get("BEHAVIOR_CAMERA_GLOBAL_PENDING", 8)),
+        per_camera_pending=int(config.get("BEHAVIOR_CAMERA_PER_CAMERA_PENDING", 2)),
+        retry_after_s=int(config.get("BEHAVIOR_CAMERA_RETRY_AFTER_S", 10)),
+    )
+    camera_queue = CameraQueue(store, camera_limits)
     app = Flask(__name__, template_folder="../templates", static_folder="../static")
     app.config.update(
         MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES,
         BEHAVIOR_STORE=store,
         BEHAVIOR_WORKER=worker,
+        BEHAVIOR_CAMERA_QUEUE=camera_queue,
     )
 
     @app.errorhandler(RequestEntityTooLarge)
@@ -1116,7 +1186,7 @@ def create_app(config: dict | None = None) -> Flask:
     def http_error(exc):
         return json_error(exc.description, exc.code or 500)
 
-    bp = behavior_blueprint(store, worker)
+    bp = behavior_blueprint(store, worker, camera_queue)
     app.register_blueprint(bp)
 
     @app.get("/")
@@ -1134,8 +1204,9 @@ def create_app(config: dict | None = None) -> Flask:
     return app
 
 
-def behavior_blueprint(store: Store, worker: BehaviorWorker):
+def behavior_blueprint(store: Store, worker: BehaviorWorker, camera_queue: CameraQueue | None = None):
     bp = Blueprint("behavior", __name__)
+    camera_queue = camera_queue or CameraQueue(store, CameraQueueLimits())
 
     def detail(vid):
         v = store.one("SELECT * FROM videos WHERE id=?", (vid,))
@@ -1242,6 +1313,97 @@ def behavior_blueprint(store: Store, worker: BehaviorWorker):
                 "job": store.job(store.one("SELECT * FROM jobs WHERE id=?", (jid,))),
             }
         ), 202
+
+    @bp.post("/api/cameras/<camera_id>/chunks")
+    def camera_chunk(camera_id):
+        """Receive one finite, video-only browser chunk and reserve its job atomically."""
+        try:
+            camera_id = validate_camera_id(camera_id)
+        except ValueError as exc:
+            return json_error(str(exc))
+        content_length = request.content_length
+        if content_length is not None and content_length > MAX_CAMERA_CHUNK_BYTES + MAX_CAMERA_MULTIPART_OVERHEAD_BYTES:
+            return json_error("camera chunk too large", 413)
+        try:
+            session_id = validate_session_id(request.form.get("capture_session_id"))
+            chunk_id = validate_chunk_id(request.form.get("chunk_id"))
+        except ValueError as exc:
+            return json_error(str(exc))
+        existing = camera_queue.receipt(camera_id, session_id, chunk_id)
+        if existing:
+            return jsonify({
+                "video": store.video(store.one("SELECT * FROM videos WHERE id=?", (existing["video_id"],))),
+                "job": store.job(store.one("SELECT * FROM jobs WHERE id=?", (existing["job_id"],))),
+                "camera": store.camera(camera_id),
+                "duplicate": True,
+            }), 202
+        state = store.cleanup()
+        if state["paused"]:
+            return json_error(state["message"], 507)
+        f = request.files.get("video")
+        if not f or not f.filename:
+            return json_error("video is required")
+        ext = Path(secure_filename(f.filename)).suffix.lower()
+        if ext not in ALLOWED_EXTENSIONS:
+            return json_error("unsupported video type")
+        vid = uuid.uuid4().hex
+        path = store.media / f"{vid}.source{ext}"
+        frame = store.frames / f"{vid}.jpg"
+        try:
+            copied = 0
+            with path.open("wb") as output:
+                while block := f.stream.read(64 * 1024):
+                    copied += len(block)
+                    if copied > MAX_CAMERA_CHUNK_BYTES:
+                        return json_error("camera chunk too large", 413)
+                    output.write(block)
+            duration = worker.analyzer.metadata(path)
+            subprocess.run(
+                ["ffmpeg", "-y", "-ss", str(min(duration / 2, 2)), "-i", str(path), "-frames:v", "1", str(frame)],
+                capture_output=True,
+            )
+            now = utcnow()
+            jid = uuid.uuid4().hex
+            video = (
+                vid, f"Camera {camera_id} chunk", now, None, None, duration, "queued", None,
+                str(path), str(frame), "empty", 0, "[]", None, None, 0,
+            )
+            job = (jid, vid, "analysis", "queued", 0, "queued", None, now, now, 0)
+            try:
+                persisted_video_id, persisted_job_id, duplicate = camera_queue.admit(
+                    video=video, job=job, camera_id=camera_id, session_id=session_id, chunk_id=chunk_id, received_at=now
+                )
+            except CameraAdmissionFull as exc:
+                response = jsonify({
+                    "error": "Camera analysis queue is full; capture is paused until a slot is available.",
+                    "retry_after_s": exc.retry_after,
+                    "scope": exc.scope,
+                })
+                response.status_code = 429
+                response.headers["Retry-After"] = str(exc.retry_after)
+                return response
+            return jsonify({
+                "video": store.video(store.one("SELECT * FROM videos WHERE id=?", (persisted_video_id,))),
+                "job": store.job(store.one("SELECT * FROM jobs WHERE id=?", (persisted_job_id,))),
+                "camera": store.camera(camera_id),
+                "duplicate": duplicate,
+            }), 202
+        except Exception as exc:
+            return json_error(f"invalid camera video: {exc}")
+        finally:
+            # Only a successfully admitted record owns its source and frame.
+            if not store.one("SELECT 1 FROM videos WHERE id=?", (vid,)):
+                path.unlink(missing_ok=True)
+                frame.unlink(missing_ok=True)
+
+    @bp.get("/api/cameras/<camera_id>")
+    def camera_status(camera_id):
+        try:
+            camera_id = validate_camera_id(camera_id)
+        except ValueError as exc:
+            return json_error(str(exc))
+        camera = store.camera(camera_id)
+        return jsonify({"camera": camera}) if camera else json_error("camera not found", 404)
 
     @bp.get("/api/videos")
     def videos():
