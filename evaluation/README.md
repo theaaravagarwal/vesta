@@ -164,3 +164,19 @@ prompt and the spatial-crop view are independent variables, and changing both at
 once produced the uninterpretable results recorded in
 [the public benchmark](../docs/context/public-benchmark.md). Use one runtime
 directory per variant and keep the model digest fixed across the comparison.
+
+## Supervised pilot acceptance
+
+The fixed-camera pilot protocol and JSON artifact are documented in
+[docs/context/pilot-plan.md](../docs/context/pilot-plan.md). Score a frozen
+session with:
+
+```bash
+uv run python -m evaluation.pilot pilot-session.json --output pilot-score.json
+```
+
+The scorer requires exactly 20 independently staged crossings, accepts at least
+18 matches, requires known first-dashboard-render latency of no more than 10
+seconds for every match, and requires at least one hour of ordinary exposure
+with at most three ordinary false alerts. Missing, failed, duplicate, and gap
+records stay visible; unknown latency never passes.

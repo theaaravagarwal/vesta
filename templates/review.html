@@ -9,12 +9,24 @@
   <link rel="stylesheet" href="{{ url_for('static', filename='review.css') }}">
 </head>
 <body>
-  <a class="skip-link" href="#workspace">Skip to review workspace</a>
+  <a class="skip-link" href="#workspace">Skip to main workspace</a>
   <header class="topbar">
     <a class="brand" href="/review" aria-label="Vesta review home"><span class="brand-mark" aria-hidden="true">V</span><span>Vesta</span><span class="brand-divider">/</span><span class="brand-context">Review</span></a>
+    <nav class="workspace-nav" aria-label="Workspace">
+      <button type="button" class="workspace-tab" data-view="monitor" aria-controls="monitor-panel" aria-selected="true">Monitor</button>
+      <button type="button" class="workspace-tab" data-view="review" aria-controls="review-panel" aria-selected="false">Review</button>
+      <button type="button" class="workspace-tab" data-view="test" aria-controls="test-panel" aria-selected="false">Test</button>
+      <button type="button" class="workspace-tab" data-view="setup" aria-controls="setup-panel" aria-selected="false">Camera setup</button>
+    </nav>
     <div class="system-state" id="system-state" aria-live="polite"><span class="state-dot" aria-hidden="true"></span><span>Checking review service…</span></div>
   </header>
   <main class="app-shell" id="workspace">
+    <section class="workspace-panel monitor-workspace" id="monitor-panel" data-workspace="monitor" aria-labelledby="monitor-title">
+      <div class="workspace-heading"><div><p class="eyebrow">Live boundary review</p><h1 id="monitor-title">Monitor</h1><p>Current collector state and the latest available frame. A missing frame or status does not indicate a clear scene.</p></div><div class="monitor-actions"><button class="button secondary" id="monitor-refresh" type="button">Refresh</button><button class="button primary" id="collector-start" type="button" disabled>Start collector</button><button class="button danger ghost" id="collector-stop" type="button" disabled>Stop collector</button></div></div>
+      <section class="monitor-grid" aria-live="polite"><article class="preview-card"><div class="card-heading"><div><h2 id="monitor-camera-name">No camera selected</h2><p id="monitor-preview-copy">Choose a configured camera to inspect its available preview.</p></div><span class="badge muted" id="collector-state">Unavailable</span></div><div class="monitor-preview" id="monitor-preview"><img id="monitor-frame" alt="Latest available camera frame" hidden><p id="monitor-frame-empty">Camera state is not available.</p></div><dl class="monitor-facts"><div><dt>Last frame</dt><dd id="monitor-last-frame">Unknown</dd></div><div><dt>Delay</dt><dd id="monitor-delay">Unknown</dd></div><div><dt>View validity</dt><dd id="monitor-view-validity">Unknown</dd></div></dl></article><article class="status-card"><h2>Collector health</h2><dl class="status-list"><div><dt>State</dt><dd id="collector-health">Unavailable</dd></div><div><dt>Session</dt><dd id="collector-session">Unknown</dd></div><div><dt>Reason</dt><dd id="collector-reason">No camera status has been loaded.</dd></div></dl><p class="quiet">Collection runs where the configured RTSP source is reachable. Browser controls do not open a remote webcam.</p></article></section><section class="monitor-alerts" aria-labelledby="monitor-alerts-title"><div class="section-heading"><div><h2 id="monitor-alerts-title">Latest candidates</h2><p>Only candidate evidence supplied by this camera is shown.</p></div><button type="button" class="button secondary" data-open-review>Open full inbox</button></div><div id="monitor-events" class="event-list"><p class="event-empty">No candidate events are available.</p></div></section>
+    </section>
+
+    <section class="workspace-panel review-workspace" id="review-panel" data-workspace="review" aria-label="Evidence review" hidden>
     <aside class="video-rail" aria-label="Video library">
       <div class="rail-head"><div><h1>Review queue</h1><p id="video-count">Loading videos…</p></div></div>
       <form id="upload-form" class="upload-panel">
@@ -26,29 +38,6 @@
         <button class="button primary full" type="submit" id="upload-submit">Upload and analyze</button>
         <p class="form-note" id="capture-note">Leave capture time blank when it is unknown.</p>
       </form>
-      <section class="webcam-panel" aria-labelledby="webcam-heading">
-        <h2 id="webcam-heading">Test this device's camera</h2>
-        <p>This browser requests this device's camera only. The recorded clip is uploaded to Vesta for remote analysis; no analysis computer's camera is opened.</p>
-        <video id="webcam-preview" class="webcam-preview" autoplay muted playsinline hidden aria-label="Webcam preview"></video>
-        <div class="webcam-actions">
-          <button class="button secondary" id="webcam-open" type="button">Open this device's camera</button>
-          <button class="button secondary" id="webcam-close" type="button" hidden>Close camera</button>
-          <button class="button primary" id="webcam-record" type="button" hidden>Record</button>
-          <button class="button secondary" id="webcam-stop" type="button" hidden>Stop</button>
-          <button class="button primary" id="webcam-analyze" type="button" hidden>Analyze recording</button>
-        </div>
-        <p class="webcam-status" id="webcam-status" role="status">This device's camera stays off until you choose Open this device's camera. Record up to 60 seconds.</p>
-      </section>
-      <section class="camera-monitor-panel" aria-labelledby="camera-monitor-heading">
-        <h2 id="camera-monitor-heading">Monitor this device's camera</h2>
-        <p>With your consent, this browser sends short video-only chunks from this device to Vesta for remote analysis. Capture never starts on page load or on an analysis computer.</p>
-        <video id="camera-monitor-preview" class="webcam-preview" autoplay muted playsinline hidden aria-label="Continuous camera preview"></video>
-        <div class="webcam-actions">
-          <button class="button primary" id="camera-monitor-start" type="button">Start monitoring this device</button>
-          <button class="button danger ghost" id="camera-monitor-stop" type="button" hidden>Stop monitoring</button>
-        </div>
-        <p class="webcam-status" id="camera-monitor-status" role="status">This device's camera is off. Start monitoring this device to request camera access. Camera capture requires HTTPS, including the private Tailscale dashboard address, or localhost.</p>
-      </section>
       <div class="video-list" id="video-list" aria-live="polite"></div>
     </aside>
 
@@ -78,6 +67,18 @@
       </div></section>
       <section class="context-card outbox-card"><div class="card-heading"><div><h2>Notification outbox</h2><p>Items wait here until an integration is connected.</p></div></div><div id="outbox-list" class="outbox-list"><p class="quiet">Checking outbox…</p></div></section>
     </aside>
+    </section>
+
+    <section class="workspace-panel test-workspace" id="test-panel" data-workspace="test" aria-labelledby="test-title" hidden>
+      <div class="workspace-heading"><div><p class="eyebrow">Verification</p><h1 id="test-title">Test</h1><p>Use uploads or this browser's camera to collect review evidence. Test results remain unknown until a named session has been reviewed.</p></div></div>
+      <div class="test-grid"><section class="test-card"><h2>Upload a test clip</h2><p>Choose a video in Review to create a reviewable source and evidence timeline.</p><button type="button" class="button primary" data-open-review>Open upload and review</button></section><section class="webcam-panel test-card" aria-labelledby="webcam-heading"><h2 id="webcam-heading">Test this device's camera</h2><p>This browser requests this device's camera only, with audio off. The recorded clip is uploaded for analysis only after you choose Analyze recording; no analysis computer's camera is opened.</p><video id="webcam-preview" class="webcam-preview" autoplay muted playsinline hidden aria-label="Webcam preview"></video><div class="webcam-actions"><button class="button secondary" id="webcam-open" type="button">Open this device's camera</button><button class="button secondary" id="webcam-close" type="button" hidden>Close camera</button><button class="button primary" id="webcam-record" type="button" hidden>Record</button><button class="button secondary" id="webcam-stop" type="button" hidden>Stop</button><button class="button primary" id="webcam-analyze" type="button" hidden>Analyze recording</button></div><p class="webcam-status" id="webcam-status" role="status">This device's camera stays off until you choose Open this device's camera. Record up to 60 seconds.</p></section><section class="camera-monitor-panel test-card" aria-labelledby="camera-monitor-heading"><h2 id="camera-monitor-heading">Monitor this device's camera</h2><p>With your consent, this browser sends short video-only chunks from this device to Vesta for remote analysis. Capture never starts on page load or on an analysis computer.</p><video id="camera-monitor-preview" class="webcam-preview" autoplay muted playsinline hidden aria-label="Continuous camera preview"></video><div class="webcam-actions"><button class="button primary" id="camera-monitor-start" type="button">Start monitoring this device</button><button class="button danger ghost" id="camera-monitor-stop" type="button" hidden>Stop monitoring</button></div><p class="webcam-status" id="camera-monitor-status" role="status">This device's camera is off. Start monitoring this device to request camera access. Camera capture requires HTTPS, including the private Tailscale dashboard address, or localhost.</p></section><section class="test-card"><h2>Named test sessions</h2><p>Expected crossings and scored results are shown when a test session is provided by the service.</p><div id="test-sessions" class="empty-results" aria-live="polite">No test session data is available.</div><p class="quiet">Pilot thresholds: 18/20 within 10 seconds and no more than 3 false positives per hour. Results are measured or unknown; this interface does not calculate a pass from missing data.</p></section></div>
+    </section>
+
+    <section class="test-operator" id="test-operator" hidden aria-labelledby="test-operator-title"><h2 id="test-operator-title">Supervised test session</h2><p>Start a named session before recording. Record observed crossings and ordinary intervals independently of candidates, then freeze the annotations for export and scoring.</p><div class="test-controls"><label>Session name <input id="test-session-name" type="text" placeholder="Supervised session" autocomplete="off"></label><button id="test-session-start" type="button" class="button primary">Start supervised test</button><button id="test-session-stop" type="button" class="button secondary" disabled>Stop test</button></div><div id="test-session-detail" class="empty-results">No session selected.</div><div id="test-annotations" hidden><h3>Independent observations</h3><div class="test-controls"><label>Line <input id="expected-line" type="text" autocomplete="off"></label><label>Start <input id="expected-start" type="number" min="0" step="0.1"></label><label>End <input id="expected-end" type="number" min="0" step="0.1"></label><label>Direction <select id="expected-direction"><option value="a_to_b">A to B</option><option value="b_to_a">B to A</option><option value="either">Either direction</option></select></label><button id="expected-add" type="button" class="button secondary">Add observed crossing</button></div><div class="test-controls"><label>Ordinary start <input id="ordinary-start" type="number" min="0" step="0.1"></label><label>Ordinary end <input id="ordinary-end" type="number" min="0" step="0.1"></label><button id="ordinary-add" type="button" class="button secondary">Add ordinary interval</button><button id="test-freeze" type="button" class="button primary">Freeze annotations</button></div></div><div id="test-session-actions" class="test-controls" hidden><button id="test-score" type="button" class="button primary">Score frozen session</button><button id="test-export" type="button" class="button secondary">Export artifact</button></div><p id="test-score-result" class="quiet" role="status"></p></section>
+    <section class="workspace-panel setup-workspace" id="setup-panel" data-workspace="setup" aria-labelledby="setup-title" hidden>
+      <div class="workspace-heading"><div><p class="eyebrow">Calibration</p><h1 id="setup-title">Camera setup</h1><p>Reference views and crossing lines are durable only after an explicit approval. Registration can suggest a view; it does not approve one.</p></div></div>
+      <div class="setup-grid"><section class="setup-card"><label class="field-label" for="camera-select">Configured camera</label><select id="camera-select"><option value="">No camera selected</option></select><p id="camera-setup-status" class="quiet">Camera configuration is not loaded.</p><button id="camera-setup-capture" class="button secondary full" type="button" disabled>Capture reference view</button></section><section class="setup-card reference-card"><h2>Reference view</h2><div class="line-drawer" id="line-drawer"><img id="setup-reference-frame" alt="Available reference frame for calibration" hidden><svg id="line-drawer-svg" viewBox="0 0 1000 562.5" preserveAspectRatio="none" aria-hidden="true"></svg></div><p id="setup-reference-empty" class="empty-results">No reference frame is available.</p><div class="webcam-actions"><button id="line-draw" class="button secondary" type="button" disabled>Draw line endpoints</button><button id="reference-propose" class="button secondary" type="button" disabled>Propose this view</button><button id="reference-register" class="button secondary" type="button" disabled>Register current view</button><button id="reference-approve" class="button primary" type="button" disabled>Approve proposed view</button></div><p id="reference-status" class="quiet">A proposed view remains inactive until approved.</p></section><section class="setup-card lines-card"><div class="card-heading"><div><h2>Crossing lines</h2><p>Enter normalized endpoints from 0 to 1. This keyboard form is an alternative to drawing.</p></div><button id="line-add" class="button secondary" type="button" disabled>Add line</button></div><div id="line-list" class="line-list" aria-live="polite"><p class="empty-results">No camera lines are loaded.</p></div><button id="lines-save" class="button primary full" type="button" disabled>Save line draft</button></section></div>
+    </section>
   </main>
   <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
   <script src="{{ url_for('static', filename='review.js') }}" defer></script>

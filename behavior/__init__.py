@@ -17,7 +17,7 @@ import time
 import uuid
 import math
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -28,6 +28,7 @@ from werkzeug.utils import secure_filename
 
 from .access import TailscaleAccess
 from .capture import CameraAdmissionFull, CameraQueue, CameraQueueLimits, validate_camera_id, validate_chunk_id, validate_session_id
+from .boundary import CameraSecrets, PREVIEW_ID, VIEW_ID, validate_id, validate_lines
 
 ALLOWED_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm"}
 MAX_UPLOAD_BYTES = 2 * 1024 * 1024 * 1024
@@ -72,17 +73,22 @@ def _json(value: Any) -> str:
 
 
 class Store:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, *, recover_jobs: bool = True):
         self.root = Path(root).resolve()
         root = self.root
         self.media = root / "media"
         self.frames = root / "frames"
         self.clips = root / "clips"
-        for p in (self.root, self.media, self.frames, self.clips):
+        self.boundary = root / "boundary"
+        self.boundary_previews = self.boundary / "previews"
+        self.boundary_views = self.boundary / "views"
+        self.boundary_evidence = self.boundary / "evidence"
+        for p in (self.root, self.media, self.frames, self.clips, self.boundary,
+                  self.boundary_previews, self.boundary_views, self.boundary_evidence):
             p.mkdir(parents=True, exist_ok=True)
         self.db_path = root / "behavior.sqlite3"
         self.lock = threading.RLock()
-        self._init()
+        self._init(recover_jobs=recover_jobs)
 
     @staticmethod
     def _absolute_path(value: str | None) -> str | None:
@@ -97,7 +103,7 @@ class Store:
         c.row_factory = sqlite3.Row
         return c
 
-    def _init(self):
+    def _init(self, *, recover_jobs: bool):
         c = self.conn()
         try:
             c.executescript("""
@@ -113,6 +119,18 @@ class Store:
             CREATE INDEX IF NOT EXISTS video_sources_camera ON video_sources(camera_id,capture_session_id);
             CREATE TABLE IF NOT EXISTS camera_sources (camera_id TEXT PRIMARY KEY,created_at TEXT NOT NULL,last_received_at TEXT,last_error TEXT,last_session_id TEXT);
             CREATE TABLE IF NOT EXISTS camera_chunk_receipts (camera_id TEXT NOT NULL,capture_session_id TEXT NOT NULL,chunk_id TEXT NOT NULL,video_id TEXT NOT NULL,job_id TEXT NOT NULL,received_at TEXT NOT NULL,PRIMARY KEY(camera_id,capture_session_id,chunk_id));
+            CREATE TABLE IF NOT EXISTS boundary_cameras (camera_id TEXT PRIMARY KEY,name TEXT NOT NULL,active_revision_id TEXT,calibration_state TEXT NOT NULL DEFAULT 'unconfigured',desired_state TEXT NOT NULL DEFAULT 'stopped',desired_test_session_id TEXT,desired_updated_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS boundary_previews (id TEXT PRIMARY KEY,camera_id TEXT NOT NULL,path TEXT NOT NULL,captured_at TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS boundary_previews_camera ON boundary_previews(camera_id,captured_at DESC);
+            CREATE TABLE IF NOT EXISTS boundary_view_revisions (id TEXT PRIMARY KEY,camera_id TEXT NOT NULL,revision INTEGER NOT NULL,image_path TEXT NOT NULL,lines TEXT NOT NULL,status TEXT NOT NULL,created_at TEXT NOT NULL,approved_at TEXT,UNIQUE(camera_id,revision));
+            CREATE TABLE IF NOT EXISTS boundary_registration_requests (camera_id TEXT PRIMARY KEY,preview_id TEXT NOT NULL,state TEXT NOT NULL,summary TEXT,revision_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS boundary_collector_status (camera_id TEXT PRIMARY KEY,state TEXT NOT NULL,session_id TEXT,epoch INTEGER NOT NULL DEFAULT 0,sequence INTEGER NOT NULL DEFAULT 0,last_heartbeat_at TEXT,last_frame_at REAL,last_error TEXT,alerts_paused INTEGER NOT NULL DEFAULT 1,reason TEXT);
+            CREATE TABLE IF NOT EXISTS boundary_sessions (id TEXT PRIMARY KEY,camera_id TEXT NOT NULL,epoch INTEGER NOT NULL,view_revision_id TEXT,started_at TEXT NOT NULL,ended_at TEXT,state TEXT NOT NULL,is_test INTEGER NOT NULL DEFAULT 0,test_name TEXT,frozen_at TEXT,tracker_model TEXT,ordinary_exposure_s REAL,gaps TEXT NOT NULL DEFAULT '[]',split TEXT,frozen_provenance TEXT NOT NULL DEFAULT '{}');
+            CREATE INDEX IF NOT EXISTS boundary_sessions_camera ON boundary_sessions(camera_id,started_at DESC);
+            CREATE TABLE IF NOT EXISTS boundary_event_provenance (event_id TEXT PRIMARY KEY,camera_id TEXT NOT NULL,session_id TEXT NOT NULL,epoch INTEGER NOT NULL,sequence INTEGER NOT NULL,view_revision_id TEXT NOT NULL,line_id TEXT NOT NULL,track_id TEXT NOT NULL,direction TEXT NOT NULL,source_started_at_s REAL NOT NULL,source_observed_at_s REAL NOT NULL,published_at_s REAL NOT NULL,dashboard_render_ack_received_at_s REAL,pre_frames TEXT NOT NULL,post_frames TEXT NOT NULL,tracker_model TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS boundary_session_expected_crossings (id TEXT PRIMARY KEY,session_id TEXT NOT NULL,line_id TEXT NOT NULL,start_s REAL NOT NULL,end_s REAL NOT NULL,direction TEXT NOT NULL,source_observed_at_s REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS boundary_session_ordinary_intervals (id TEXT PRIMARY KEY,session_id TEXT NOT NULL,start_s REAL NOT NULL,end_s REAL NOT NULL);
+            CREATE TABLE IF NOT EXISTS boundary_test_segments (id TEXT PRIMARY KEY,session_id TEXT NOT NULL,video_id TEXT NOT NULL,start_s REAL NOT NULL,end_s REAL NOT NULL);
             """)
             columns = {
                 row[1] for row in c.execute("PRAGMA table_info(analysis_windows)")
@@ -120,15 +138,24 @@ class Store:
             for column in ("model", "config_version"):
                 if column not in columns:
                     c.execute(f"ALTER TABLE analysis_windows ADD COLUMN {column} TEXT")
-            # An interrupted process cannot leave a job permanently processing.
-            c.execute(
-                "UPDATE jobs SET status='queued', stage='recovered', updated_at=? WHERE status='processing' AND cancelled=0",
-                (utcnow(),),
-            )
-            c.execute(
-                "UPDATE jobs SET status='cancelled', stage='cancelled', updated_at=? WHERE cancelled=1 AND status IN ('queued','processing')",
-                (utcnow(),),
-            )
+            camera_columns = {row[1] for row in c.execute("PRAGMA table_info(boundary_cameras)")}
+            if "desired_test_session_id" not in camera_columns:
+                c.execute("ALTER TABLE boundary_cameras ADD COLUMN desired_test_session_id TEXT")
+            session_columns = {row[1] for row in c.execute("PRAGMA table_info(boundary_sessions)")}
+            for column, definition in (("is_test", "INTEGER NOT NULL DEFAULT 0"), ("test_name", "TEXT"), ("frozen_at", "TEXT")):
+                if column not in session_columns:
+                    c.execute(f"ALTER TABLE boundary_sessions ADD COLUMN {column} {definition}")
+            # The sidecar collector opens this Store with recovery disabled: it
+            # shares SQLite for boundary state but must never alter web jobs.
+            if recover_jobs:
+                c.execute(
+                    "UPDATE jobs SET status='queued', stage='recovered', updated_at=? WHERE status='processing' AND cancelled=0",
+                    (utcnow(),),
+                )
+                c.execute(
+                    "UPDATE jobs SET status='cancelled', stage='cancelled', updated_at=? WHERE cancelled=1 AND status IN ('queued','processing')",
+                    (utcnow(),),
+                )
             for table, column in (("videos", "path"), ("videos", "frame_path"), ("events", "clip_path")):
                 rows = c.execute(f"SELECT rowid, {column} FROM {table} WHERE {column} IS NOT NULL").fetchall()
                 for row in rows:
@@ -163,6 +190,683 @@ class Store:
                 c.commit()
             finally:
                 c.close()
+
+    def boundary_ensure_camera(self, camera_id: str) -> None:
+        validate_camera_id(camera_id)
+        now = utcnow()
+        self.run(
+            "INSERT OR IGNORE INTO boundary_cameras "
+            "(camera_id,name,created_at,updated_at) VALUES (?,?,?,?)",
+            (camera_id, camera_id, now, now),
+        )
+
+    @staticmethod
+    def _boundary_lines(row) -> list[dict[str, Any]]:
+        try:
+            return json.loads(row["lines"] or "[]") if row else []
+        except (TypeError, json.JSONDecodeError):
+            return []
+
+    def boundary_camera(self, camera_id: str) -> dict[str, Any] | None:
+        validate_camera_id(camera_id)
+        row = self.one("SELECT * FROM boundary_cameras WHERE camera_id=?", (camera_id,))
+        if not row:
+            return None
+        status = self.one("SELECT * FROM boundary_collector_status WHERE camera_id=?", (camera_id,))
+        active = self.one("SELECT * FROM boundary_view_revisions WHERE id=?", (row["active_revision_id"],)) if row["active_revision_id"] else None
+        revisions = self.all("SELECT * FROM boundary_view_revisions WHERE camera_id=? ORDER BY revision DESC", (camera_id,))
+        preview = self.one("SELECT * FROM boundary_previews WHERE camera_id=? ORDER BY captured_at DESC LIMIT 1", (camera_id,))
+        registration = self.one("SELECT preview_id,state,summary,revision_id,created_at,updated_at FROM boundary_registration_requests WHERE camera_id=?", (camera_id,))
+        if status:
+            try:
+                heartbeat_stale = (datetime.now(timezone.utc) - datetime.fromisoformat(
+                    status["last_heartbeat_at"].replace("Z", "+00:00")
+                )).total_seconds() > 15
+            except (AttributeError, ValueError):
+                heartbeat_stale = True
+            collector = {"state": status["state"], "session_id": status["session_id"], "epoch": status["epoch"],
+                         "sequence": status["sequence"], "last_heartbeat_at": status["last_heartbeat_at"],
+                         "last_frame_at": status["last_frame_at"], "last_error": status["last_error"],
+                         "alerts_paused": bool(status["alerts_paused"]), "reason": status["reason"],
+                         "heartbeat_stale": heartbeat_stale}
+        else:
+            collector = {"state": "unavailable", "session_id": None, "epoch": 0, "sequence": 0,
+                         "last_heartbeat_at": None, "last_frame_at": None, "last_error": None,
+                         "alerts_paused": True, "reason": "collector has not reported", "heartbeat_stale": True}
+        return {
+            "id": row["camera_id"], "name": row["name"], "active_revision_id": row["active_revision_id"],
+            "calibration_state": row["calibration_state"], "desired_state": row["desired_state"],
+            "desired_test_session_id": row["desired_test_session_id"],
+            "desired_updated_at": row["desired_updated_at"], "created_at": row["created_at"],
+            "updated_at": row["updated_at"], "lines": self._boundary_lines(active),
+            "revisions": [{"id": item["id"], "revision": item["revision"], "status": item["status"],
+                           "created_at": item["created_at"], "approved_at": item["approved_at"],
+                           "lines": self._boundary_lines(item)} for item in revisions],
+            "preview": ({"id": preview["id"], "captured_at": preview["captured_at"],
+                         "frame_url": f"/api/cameras/{camera_id}/previews/{preview['id']}"} if preview else None),
+            "registration": dict(registration) if registration else None,
+            "collector": collector,
+        }
+
+    def boundary_cameras(self) -> list[dict[str, Any]]:
+        return [self.boundary_camera(row["camera_id"]) for row in self.all("SELECT camera_id FROM boundary_cameras ORDER BY name,camera_id")]
+
+    def boundary_set_desired(self, camera_id: str, state: str, test_session_id: str | None = None) -> None:
+        if state not in {"stopped", "setup", "register", "running"}:
+            raise ValueError("desired collector state is invalid")
+        self.boundary_ensure_camera(camera_id)
+        self.run("UPDATE boundary_cameras SET desired_state=?,desired_test_session_id=?,desired_updated_at=?,updated_at=? WHERE camera_id=?",
+                 (state, test_session_id, utcnow(), utcnow(), camera_id))
+
+    def boundary_desired_cameras(self):
+        return self.all("SELECT camera_id AS id,desired_state,desired_test_session_id FROM boundary_cameras")
+
+    def boundary_status(self, camera_id: str, *, state: str, session_id: str | None = None,
+                        epoch: int | None = None, sequence: int | None = None,
+                        last_frame_at: float | None = None, error: str | None = None,
+                        alerts_paused: bool | None = None, reason: str | None = None) -> None:
+        self.boundary_ensure_camera(camera_id)
+        old = self.one("SELECT * FROM boundary_collector_status WHERE camera_id=?", (camera_id,))
+        values = {
+            "session_id": session_id if session_id is not None else (old["session_id"] if old else None),
+            "epoch": epoch if epoch is not None else (old["epoch"] if old else 0),
+            "sequence": sequence if sequence is not None else (old["sequence"] if old else 0),
+            "last_frame_at": last_frame_at if last_frame_at is not None else (old["last_frame_at"] if old else None),
+            "alerts_paused": int(alerts_paused) if alerts_paused is not None else (old["alerts_paused"] if old else 1),
+        }
+        self.run(
+            "INSERT INTO boundary_collector_status "
+            "(camera_id,state,session_id,epoch,sequence,last_heartbeat_at,last_frame_at,last_error,alerts_paused,reason) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(camera_id) DO UPDATE SET "
+            "state=excluded.state,session_id=excluded.session_id,epoch=excluded.epoch,sequence=excluded.sequence,"
+            "last_heartbeat_at=excluded.last_heartbeat_at,last_frame_at=excluded.last_frame_at,last_error=excluded.last_error,"
+            "alerts_paused=excluded.alerts_paused,reason=excluded.reason",
+            (camera_id, state, values["session_id"], values["epoch"], values["sequence"], utcnow(),
+             values["last_frame_at"], error, values["alerts_paused"], reason),
+        )
+
+    def save_boundary_preview(self, camera_id: str, image: bytes) -> str:
+        self.boundary_ensure_camera(camera_id)
+        preview_id = f"preview_{uuid.uuid4().hex}"
+        path = self.boundary_previews / f"{preview_id}.jpg"
+        temporary = path.with_suffix(".part")
+        temporary.write_bytes(image)
+        temporary.replace(path)
+        now = utcnow()
+        self.run("INSERT INTO boundary_previews VALUES (?,?,?,?)", (preview_id, camera_id, str(path), now))
+        # Preview rows are working material. Reference revisions copy their file,
+        # so pruning old previews cannot remove an approved calibration image.
+        stale = self.all("SELECT id,path FROM boundary_previews WHERE camera_id=? ORDER BY captured_at DESC LIMIT -1 OFFSET 5", (camera_id,))
+        for item in stale:
+            self.run("DELETE FROM boundary_previews WHERE id=?", (item["id"],))
+            Path(item["path"]).unlink(missing_ok=True)
+        return preview_id
+
+    def boundary_create_revision(self, camera_id: str, preview_id: str, lines: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+        self.boundary_ensure_camera(camera_id)
+        preview_id = validate_id(preview_id, PREVIEW_ID, "preview id")
+        preview = self.one("SELECT * FROM boundary_previews WHERE id=? AND camera_id=?", (preview_id, camera_id))
+        if not preview or not Path(preview["path"]).is_file():
+            raise ValueError("reference preview not found")
+        camera = self.boundary_camera(camera_id)
+        if lines is None:
+            lines = camera["lines"] if camera else []
+        lines = validate_lines(lines)
+        revision_id = f"view_{uuid.uuid4().hex}"
+        destination = self.boundary_views / f"{revision_id}.jpg"
+        shutil.copyfile(preview["path"], destination)
+        now = utcnow()
+        with self.lock:
+            conn = self.conn()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                number = conn.execute("SELECT coalesce(max(revision),0)+1 FROM boundary_view_revisions WHERE camera_id=?", (camera_id,)).fetchone()[0]
+                conn.execute("INSERT INTO boundary_view_revisions VALUES (?,?,?,?,?,?,?,?)",
+                             (revision_id, camera_id, number, str(destination), _json(lines), "proposed", now, None))
+                # A fresh reference is a possible camera movement. Preserve prior
+                # geometry, but pause instead of silently applying it to this view.
+                conn.execute("UPDATE boundary_cameras SET calibration_state='needs_approval',desired_state='stopped',desired_updated_at=?,updated_at=? WHERE camera_id=?",
+                             (now, now, camera_id))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                destination.unlink(missing_ok=True)
+                raise
+            finally:
+                conn.close()
+        return {"id": revision_id, "revision": number, "status": "proposed", "lines": lines, "created_at": now}
+
+    def boundary_request_registration(self, camera_id: str, preview_id: str) -> None:
+        """Queue a local geometric suggestion; it never changes the active view."""
+        self.boundary_ensure_camera(camera_id)
+        preview_id = validate_id(preview_id, PREVIEW_ID, "preview id")
+        preview = self.one("SELECT 1 FROM boundary_previews WHERE id=? AND camera_id=?", (preview_id, camera_id))
+        active = self.one("SELECT 1 FROM boundary_view_revisions WHERE id=(SELECT active_revision_id FROM boundary_cameras WHERE camera_id=?)", (camera_id,))
+        if not preview:
+            raise ValueError("reference preview not found")
+        if not active:
+            raise ValueError("an approved reference view is required before registration")
+        now = utcnow()
+        # Capturing a possible new view means existing image-plane geometry is
+        # uncertain.  Preserve it for comparison, but never keep alerting.
+        self.run("UPDATE boundary_cameras SET calibration_state='needs_approval',desired_state='register',desired_updated_at=?,updated_at=? WHERE camera_id=?",
+                 (now, now, camera_id))
+        self.run("INSERT INTO boundary_registration_requests VALUES (?,?,?,?,?,?,?) ON CONFLICT(camera_id) DO UPDATE SET preview_id=excluded.preview_id,state='queued',summary=NULL,revision_id=NULL,updated_at=excluded.updated_at",
+                 (camera_id, preview_id, "queued", None, None, now, now))
+
+    def boundary_registration_preview(self, camera_id: str) -> str | None:
+        request = self.one("SELECT preview_id FROM boundary_registration_requests WHERE camera_id=? AND state='queued'", (camera_id,))
+        return request["preview_id"] if request else None
+
+    def boundary_complete_registration(self, camera_id: str, preview_id: str) -> dict[str, Any]:
+        """Use ORB/RANSAC to map approved line endpoints to a fresh preview.
+
+        This executes in the local collector sidecar, never in an HTTP request.
+        A proposed immutable revision is still explicitly reviewed and approved.
+        """
+        import cv2
+        import numpy as np
+
+        camera = self.boundary_camera(camera_id)
+        if not camera or not camera["active_revision_id"]:
+            raise ValueError("an approved reference view is required before registration")
+        preview = self.one("SELECT path FROM boundary_previews WHERE id=? AND camera_id=?", (preview_id, camera_id))
+        active = self.one("SELECT image_path,lines FROM boundary_view_revisions WHERE id=? AND camera_id=?", (camera["active_revision_id"], camera_id))
+        if not preview or not active:
+            raise ValueError("registration images are unavailable")
+        source = cv2.imread(active["image_path"], cv2.IMREAD_GRAYSCALE)
+        target = cv2.imread(preview["path"], cv2.IMREAD_GRAYSCALE)
+        if source is None or target is None:
+            raise ValueError("registration images are unreadable")
+        # Keep the one-off task bounded on high-resolution cameras.
+        def shrink(image):
+            height, width = image.shape[:2]
+            scale = min(1.0, 1600.0 / max(height, width))
+            return cv2.resize(image, (round(width * scale), round(height * scale))) if scale < 1 else image, scale
+        source_small, source_scale = shrink(source)
+        target_small, target_scale = shrink(target)
+        orb = cv2.ORB_create(nfeatures=1200)
+        key_a, desc_a = orb.detectAndCompute(source_small, None)
+        key_b, desc_b = orb.detectAndCompute(target_small, None)
+        if desc_a is None or desc_b is None or len(key_a) < 12 or len(key_b) < 12:
+            raise ValueError("registration needs more stable visual features")
+        pairs = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(desc_a, desc_b, k=2)
+        good = [first for first, second in pairs if first.distance < 0.72 * second.distance]
+        if len(good) < 12:
+            raise ValueError("registration has too few reliable feature matches")
+        source_points = np.float32([key_a[item.queryIdx].pt for item in good]).reshape(-1, 1, 2)
+        target_points = np.float32([key_b[item.trainIdx].pt for item in good]).reshape(-1, 1, 2)
+        homography_small, mask = cv2.findHomography(source_points, target_points, cv2.RANSAC, 3.0)
+        inliers = int(mask.sum()) if mask is not None else 0
+        if homography_small is None or inliers < 8 or inliers / len(good) < 0.45:
+            raise ValueError("registration could not establish a reliable geometric alignment")
+        source_to_small = np.diag([source_scale, source_scale, 1.0])
+        small_to_target = np.diag([1.0 / target_scale, 1.0 / target_scale, 1.0])
+        homography = small_to_target @ homography_small @ source_to_small
+        height, width = source.shape[:2]
+        target_height, target_width = target.shape[:2]
+        transformed = []
+        for line in self._boundary_lines(active):
+            points = np.float32([[[line["start"][0] * width, line["start"][1] * height]],
+                                 [[line["end"][0] * width, line["end"][1] * height]]])
+            output = cv2.perspectiveTransform(points, homography).reshape(2, 2)
+            normalized = (output / np.array([target_width, target_height])).tolist()
+            if any(not -0.02 <= value <= 1.02 for point in normalized for value in point):
+                raise ValueError("registration moves a line outside the proposed view")
+            transformed.append({**line, "start": [round(max(0, min(1, value)), 6) for value in normalized[0]],
+                                "end": [round(max(0, min(1, value)), 6) for value in normalized[1]]})
+        revision = self.boundary_create_revision(camera_id, preview_id, transformed)
+        now = utcnow()
+        summary = f"ORB/RANSAC suggested {inliers}/{len(good)} inlier matches"
+        self.run("UPDATE boundary_registration_requests SET state='proposed',summary=?,revision_id=?,updated_at=? WHERE camera_id=?",
+                 (summary, revision["id"], now, camera_id))
+        return {"revision": revision, "summary": summary}
+
+    def boundary_fail_registration(self, camera_id: str, message: str) -> None:
+        now = utcnow()
+        self.run("UPDATE boundary_registration_requests SET state='unavailable',summary=?,updated_at=? WHERE camera_id=?",
+                 (message, now, camera_id))
+        self.boundary_set_desired(camera_id, "stopped")
+
+    def boundary_reference_alignment(self, camera_id: str, frame: bytes) -> tuple[bool | None, str]:
+        """Compare one monitor frame with the approved fixed reference.
+
+        ``None`` means the image pair is presently unverifiable.  Callers use
+        repeated unverifiable samples as a conservative calibration failure.
+        """
+        import cv2
+        import numpy as np
+
+        camera = self.boundary_camera(camera_id)
+        if not camera or not camera["active_revision_id"]:
+            return False, "no approved reference view"
+        active = self.one("SELECT image_path FROM boundary_view_revisions WHERE id=?", (camera["active_revision_id"],))
+        source = cv2.imread(active["image_path"], cv2.IMREAD_GRAYSCALE) if active else None
+        target = cv2.imdecode(np.frombuffer(frame, dtype=np.uint8), cv2.IMREAD_GRAYSCALE)
+        if source is None or target is None:
+            return None, "reference comparison image is unreadable"
+        def shrink(image):
+            height, width = image.shape[:2]
+            scale = min(1.0, 1280.0 / max(height, width))
+            return (cv2.resize(image, (round(width * scale), round(height * scale))) if scale < 1 else image), scale
+        source_small, source_scale = shrink(source)
+        target_small, target_scale = shrink(target)
+        orb = cv2.ORB_create(nfeatures=900)
+        key_a, desc_a = orb.detectAndCompute(source_small, None)
+        key_b, desc_b = orb.detectAndCompute(target_small, None)
+        if desc_a is None or desc_b is None or len(key_a) < 12 or len(key_b) < 12:
+            return None, "reference comparison needs more stable features"
+        pairs = cv2.BFMatcher(cv2.NORM_HAMMING).knnMatch(desc_a, desc_b, k=2)
+        good = [first for first, second in pairs if first.distance < 0.72 * second.distance]
+        if len(good) < 12:
+            return None, "reference comparison has too few reliable matches"
+        source_points = np.float32([key_a[item.queryIdx].pt for item in good]).reshape(-1, 1, 2)
+        target_points = np.float32([key_b[item.trainIdx].pt for item in good]).reshape(-1, 1, 2)
+        matrix, mask = cv2.findHomography(source_points, target_points, cv2.RANSAC, 3.0)
+        inliers = int(mask.sum()) if mask is not None else 0
+        if matrix is None or inliers < 8 or inliers / len(good) < 0.45:
+            return None, "reference comparison could not establish alignment"
+        source_height, source_width = source.shape[:2]
+        target_height, target_width = target.shape[:2]
+        matrix = np.diag([1.0 / target_scale, 1.0 / target_scale, 1.0]) @ matrix @ np.diag([source_scale, source_scale, 1.0])
+        corners = np.float32([[[0, 0]], [[source_width, 0]], [[source_width, source_height]], [[0, source_height]]])
+        mapped = cv2.perspectiveTransform(corners, matrix).reshape(4, 2)
+        target_corners = np.array([[0, 0], [target_width, 0], [target_width, target_height], [0, target_height]], dtype=np.float32)
+        displacement = np.linalg.norm((mapped - target_corners) / np.array([target_width, target_height]), axis=1)
+        # A fixed camera needs a tight image-plane correspondence.  Four pixels
+        # is deliberately stricter than one percent of a frame diagonal, so a
+        # modest reframing cannot silently reuse image-plane line geometry.
+        tolerance = min(0.01, 4.0 / math.hypot(target_width, target_height))
+        if float(displacement.max()) > tolerance:
+            return False, "reference alignment indicates camera movement"
+        return True, f"reference alignment verified ({inliers}/{len(good)} inliers)"
+
+    def boundary_mark_calibration_uncertain(self, camera_id: str, reason: str) -> None:
+        now = utcnow()
+        self.run("UPDATE boundary_cameras SET calibration_state='needs_approval',desired_state='stopped',desired_updated_at=?,updated_at=? WHERE camera_id=?",
+                 (now, now, camera_id))
+        self.boundary_status(camera_id, state="paused", error=None, alerts_paused=True, reason=reason)
+
+    def boundary_update_config(self, camera_id: str, data: dict[str, Any]) -> dict[str, Any]:
+        if not isinstance(data, dict) or set(data) - {"name", "lines"} or not data:
+            raise ValueError("config accepts name and/or lines")
+        self.boundary_ensure_camera(camera_id)
+        name = data.get("name")
+        if name is not None and (not isinstance(name, str) or not 1 <= len(name.strip()) <= 120):
+            raise ValueError("camera name must be 1 to 120 characters")
+        lines = validate_lines(data["lines"]) if "lines" in data else None
+        if lines is not None:
+            latest = self.one("SELECT id FROM boundary_previews WHERE camera_id=? ORDER BY captured_at DESC LIMIT 1", (camera_id,))
+            if not latest:
+                raise ValueError("capture a reference frame before editing lines")
+            self.boundary_create_revision(camera_id, latest["id"], lines)
+        if name is not None:
+            self.run("UPDATE boundary_cameras SET name=?,updated_at=? WHERE camera_id=?", (name.strip(), utcnow(), camera_id))
+        return self.boundary_camera(camera_id) or {}
+
+    def boundary_approve_revision(self, camera_id: str, revision_id: str) -> dict[str, Any]:
+        revision_id = validate_id(revision_id, VIEW_ID, "view revision id")
+        row = self.one("SELECT * FROM boundary_view_revisions WHERE id=? AND camera_id=?", (revision_id, camera_id))
+        if not row:
+            raise ValueError("reference revision not found")
+        if not any(line["enabled"] for line in self._boundary_lines(row)):
+            raise ValueError("reference revision needs at least one enabled line before approval")
+        now = utcnow()
+        self.run("UPDATE boundary_view_revisions SET status='approved',approved_at=? WHERE id=?", (now, revision_id))
+        self.run("UPDATE boundary_cameras SET active_revision_id=?,calibration_state='calibrated',desired_state='stopped',desired_updated_at=?,updated_at=? WHERE camera_id=?",
+                 (revision_id, now, now, camera_id))
+        return self.boundary_camera(camera_id) or {}
+
+    def boundary_session_start(self, session_id: str, camera_id: str, epoch: int, revision_id: str) -> None:
+        existing = self.one("SELECT 1 FROM boundary_sessions WHERE id=?", (session_id,))
+        if existing:
+            self.run("UPDATE boundary_sessions SET epoch=?,view_revision_id=?,state='running',ended_at=NULL WHERE id=?",
+                     (epoch, revision_id, session_id))
+            return
+        self.run("INSERT INTO boundary_sessions "
+                 "(id,camera_id,epoch,view_revision_id,started_at,state,frozen_provenance) VALUES (?,?,?,?,?,?,?)",
+                 (session_id, camera_id, epoch, revision_id, utcnow(), "running", _json({"view_revision_id": revision_id})))
+
+    def boundary_session_end(self, session_id: str, state: str) -> None:
+        self.run("UPDATE boundary_sessions SET ended_at=?,state=? WHERE id=?", (utcnow(), state, session_id))
+
+    def boundary_add_gap(self, session_id: str, start_s: float, end_s: float, reason: str) -> None:
+        """Record unavailable/uncertain capture time for test-session scoring."""
+        if end_s <= start_s:
+            return
+        row = self.one("SELECT gaps FROM boundary_sessions WHERE id=?", (session_id,))
+        if not row:
+            return
+        gaps = json.loads(row["gaps"] or "[]")
+        gaps.append({"start_s": round(max(0.0, start_s), 3), "end_s": round(max(0.0, end_s), 3), "reason": reason})
+        self.run("UPDATE boundary_sessions SET gaps=? WHERE id=?", (_json(gaps), session_id))
+
+    def boundary_test_start(self, camera_id: str, name: str | None, split: str = "development") -> dict[str, Any]:
+        self.boundary_ensure_camera(camera_id)
+        if name is not None and (not isinstance(name, str) or not 1 <= len(name.strip()) <= 120):
+            raise ValueError("test session name must be 1 to 120 characters")
+        if split not in {"development", "held_out"}:
+            raise ValueError("test session split must be development or held_out")
+        session_id = f"tsess_{uuid.uuid4().hex}"
+        now = utcnow()
+        prior = self.one("SELECT desired_state FROM boundary_cameras WHERE camera_id=?", (camera_id,))
+        self.run("INSERT INTO boundary_sessions (id,camera_id,epoch,started_at,state,is_test,test_name,split,frozen_provenance) VALUES (?,?,?,?,?,?,?,?,?)",
+                 (session_id, camera_id, 0, now, "requested", 1, name.strip() if name else None, split,
+                  _json({"prior_desired_state": prior["desired_state"] if prior else "stopped"})))
+        self.boundary_set_desired(camera_id, "running", session_id)
+        return self.boundary_session(camera_id, session_id) or {}
+
+    def boundary_test_stop(self, camera_id: str, session_id: str) -> None:
+        row = self.one("SELECT is_test,frozen_provenance FROM boundary_sessions WHERE id=? AND camera_id=?", (session_id, camera_id))
+        if not row or not row["is_test"]:
+            raise ValueError("test session not found")
+        previous = json.loads(row["frozen_provenance"] or "{}").get("prior_desired_state", "stopped")
+        self.boundary_set_desired(camera_id, previous if previous in {"running", "stopped"} else "stopped")
+
+    def boundary_expected_crossing(self, session_id: str, data: dict[str, Any], crossing_id: str | None = None) -> str:
+        session = self.one("SELECT frozen_at,is_test FROM boundary_sessions WHERE id=?", (session_id,))
+        if not session or not session["is_test"]:
+            raise ValueError("test session not found")
+        if session["frozen_at"]:
+            raise ValueError("test session annotations are frozen")
+        if not isinstance(data, dict) or set(data) != {"line_id", "start_s", "end_s", "direction"}:
+            raise ValueError("expected crossing requires line_id, start_s, end_s, and direction")
+        if not isinstance(data["line_id"], str) or not re.fullmatch(r"line_[A-Za-z0-9_-]{8,64}", data["line_id"]):
+            raise ValueError("line id is invalid")
+        try:
+            start, end = float(data["start_s"]), float(data["end_s"])
+        except (TypeError, ValueError):
+            raise ValueError("expected crossing times are invalid")
+        if not all(math.isfinite(value) and value >= 0 for value in (start, end)) or end < start:
+            raise ValueError("expected crossing times are invalid")
+        if data["direction"] not in {"a_to_b", "b_to_a", "either"}:
+            raise ValueError("expected crossing direction is invalid")
+        crossing_id = crossing_id or f"expected_{uuid.uuid4().hex}"
+        # Ground-truth positives and ordinary-negative intervals must stay
+        # disjoint. Endpoint contact is allowed; positive-duration overlap is
+        # ambiguous and must be corrected before a frozen score is possible.
+        overlap = self.one(
+            "SELECT 1 FROM boundary_session_ordinary_intervals WHERE session_id=? AND start_s < ? AND end_s > ?",
+            (session_id, end, start),
+        )
+        if overlap:
+            raise ValueError("expected crossing overlaps an ordinary interval")
+        self.run("INSERT INTO boundary_session_expected_crossings VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET line_id=excluded.line_id,start_s=excluded.start_s,end_s=excluded.end_s,direction=excluded.direction,source_observed_at_s=excluded.source_observed_at_s",
+                 (crossing_id, session_id, data["line_id"], start, end, data["direction"], end))
+        return crossing_id
+
+    def boundary_ordinary_interval(self, session_id: str, data: dict[str, Any]) -> str:
+        session = self.one("SELECT frozen_at,is_test FROM boundary_sessions WHERE id=?", (session_id,))
+        if not session or not session["is_test"]:
+            raise ValueError("test session not found")
+        if session["frozen_at"]:
+            raise ValueError("test session annotations are frozen")
+        if not isinstance(data, dict) or set(data) != {"start_s", "end_s"}:
+            raise ValueError("ordinary interval requires start_s and end_s")
+        try:
+            start, end = float(data["start_s"]), float(data["end_s"])
+        except (TypeError, ValueError):
+            raise ValueError("ordinary interval times are invalid")
+        if not all(math.isfinite(value) and value >= 0 for value in (start, end)) or end <= start:
+            raise ValueError("ordinary interval times are invalid")
+        overlap = self.one(
+            "SELECT 1 FROM boundary_session_expected_crossings WHERE session_id=? AND start_s < ? AND end_s > ?",
+            (session_id, end, start),
+        )
+        if overlap:
+            raise ValueError("ordinary interval overlaps an expected crossing")
+        interval_id = f"ordinary_{uuid.uuid4().hex}"
+        self.run("INSERT INTO boundary_session_ordinary_intervals VALUES (?,?,?,?)", (interval_id, session_id, start, end))
+        return interval_id
+
+    def boundary_freeze_test(self, session_id: str) -> None:
+        row = self.one("SELECT is_test,state FROM boundary_sessions WHERE id=?", (session_id,))
+        if not row or not row["is_test"]:
+            raise ValueError("test session not found")
+        if row["state"] in {"requested", "running"}:
+            raise ValueError("test session recording is active")
+        self.run("UPDATE boundary_sessions SET frozen_at=? WHERE id=? AND frozen_at IS NULL", (utcnow(), session_id))
+
+    def _write_boundary_media(self, video_id: str, frames: list[bytes]) -> tuple[Path, Path, float]:
+        """Encode a finite evidence segment while the collector owns the frames."""
+        import cv2
+        import numpy as np
+
+        decoded = []
+        for frame in frames:
+            image = cv2.imdecode(np.frombuffer(frame, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if image is not None:
+                decoded.append(image)
+        if not decoded:
+            raise RuntimeError("boundary evidence frames could not be encoded")
+        path = self.media / f"{video_id}.mp4"
+        temporary = self.media / f"{video_id}.writing.mp4"
+        height, width = decoded[0].shape[:2]
+        writer = cv2.VideoWriter(str(temporary), cv2.VideoWriter_fourcc(*"mp4v"), 5.0, (width, height))
+        if not writer.isOpened():
+            raise RuntimeError("boundary evidence video encoder is unavailable")
+        try:
+            for image in decoded:
+                if image.shape[:2] != (height, width):
+                    image = cv2.resize(image, (width, height))
+                writer.write(image)
+        finally:
+            writer.release()
+        if not temporary.is_file() or not temporary.stat().st_size:
+            temporary.unlink(missing_ok=True)
+            raise RuntimeError("boundary evidence video encoder produced no media")
+        try:
+            subprocess.run(["ffmpeg", "-y", "-i", str(temporary), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+                            "-movflags", "+faststart", str(path)], capture_output=True, check=True, timeout=30)
+        except Exception as exc:
+            temporary.unlink(missing_ok=True)
+            raise RuntimeError("boundary evidence video could not be normalized for browser playback") from exc
+        temporary.unlink(missing_ok=True)
+        frame_path = self.frames / f"{video_id}.jpg"
+        if not cv2.imwrite(str(frame_path), decoded[min(len(decoded) - 1, len(decoded) // 2)]):
+            path.unlink(missing_ok=True)
+            raise RuntimeError("boundary evidence frame could not be written")
+        return path, frame_path, len(decoded) / 5.0
+
+    def create_boundary_test_segment(self, session_id: str, camera_id: str, start_s: float, end_s: float, frames: list[bytes]) -> str:
+        video_id = f"boundary_test_{uuid.uuid4().hex}"
+        path, frame, duration = self._write_boundary_media(video_id, frames)
+        now = utcnow()
+        try:
+            with self.lock:
+                conn = self.conn()
+                try:
+                    conn.execute("BEGIN IMMEDIATE")
+                    conn.execute("INSERT INTO videos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                                 (video_id, f"Boundary test evidence {camera_id}", now, now, "UTC", duration, "done", None,
+                                  str(path), str(frame), "empty", 0, "[]", None, None, 0))
+                    conn.execute("INSERT INTO video_sources (video_id,source_kind,camera_id,capture_session_id) VALUES (?,?,?,?)",
+                                 (video_id, "boundary_test_capture", camera_id, session_id))
+                    conn.execute("INSERT INTO boundary_test_segments VALUES (?,?,?,?,?)",
+                                 (f"segment_{uuid.uuid4().hex}", session_id, video_id, start_s, end_s))
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+                finally:
+                    conn.close()
+        except Exception:
+            path.unlink(missing_ok=True)
+            frame.unlink(missing_ok=True)
+            raise
+        return video_id
+
+    def create_boundary_event(self, *, camera_id: str, session_id: str, epoch: int, sequence: int,
+                              revision_id: str, crossing, pre_frames: list[bytes], post_frames: list[bytes],
+                              tracker_model: str) -> str:
+        event_id = uuid.uuid5(uuid.NAMESPACE_URL, f"boundary:{camera_id}:{session_id}:{epoch}:{sequence}:{crossing.line_id}:{crossing.track_id}").hex
+        existing = self.one("SELECT 1 FROM boundary_event_provenance WHERE event_id=?", (event_id,))
+        if existing:
+            return event_id
+        folder = self.boundary_evidence / event_id
+        folder.mkdir(parents=True, exist_ok=True)
+        refs = {"pre": [], "post": []}
+        for kind, frames in (("pre", pre_frames), ("post", post_frames)):
+            for index, frame in enumerate(frames):
+                filename = f"{kind}-{index:03d}.jpg"
+                path = folder / filename
+                path.write_bytes(frame)
+                refs[kind].append(filename)
+        video_id = f"boundary_{event_id}"
+        try:
+            video_path, frame_path, duration = self._write_boundary_media(video_id, pre_frames + post_frames)
+        except Exception:
+            shutil.rmtree(folder, ignore_errors=True)
+            raise
+        observed = float(crossing.crossed_at)
+        started = float(crossing.started_at)
+        published = time.time()
+        line = next((item for item in self.boundary_camera(camera_id)["lines"] if item["id"] == crossing.line_id), None)
+        description = f"A tracked person crossed the configured line{(': ' + line['label']) if line else ''}."
+        evidence = [f"Track {crossing.track_id} crossed the configured line in {crossing.direction} image direction."]
+        with self.lock:
+            conn = self.conn()
+            try:
+                conn.execute("BEGIN IMMEDIATE")
+                captured_at = datetime.fromtimestamp(observed, timezone.utc).isoformat().replace("+00:00", "Z")
+                now = utcnow()
+                conn.execute("INSERT OR IGNORE INTO videos VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                             (video_id, f"Boundary evidence {camera_id}", now, captured_at, "UTC", duration, "done", None,
+                              str(video_path), str(frame_path), "empty", 0, "[]", None, None, 0))
+                conn.execute("INSERT OR IGNORE INTO video_sources (video_id,source_kind,camera_id,capture_session_id) VALUES (?,?,?,?)",
+                             (video_id, "boundary_collector", camera_id, session_id))
+                crossing_offset = min(duration, max(0.0, (len(pre_frames) - 1) / 5.0))
+                transition_s = max(0.0, observed - started)
+                transition_start = max(0.0, crossing_offset - transition_s)
+                conn.execute("INSERT OR IGNORE INTO events VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                             (event_id, video_id, transition_start, crossing_offset, "boundary_entry", description,
+                              _json(evidence), "Review the pre- and post-crossing frames; direction uses the approved image-plane line.",
+                              _json([crossing.track_id]), "unreviewed", 0, "", str(video_path), tracker_model, "boundary-pilot-v1"))
+                conn.execute("INSERT OR IGNORE INTO boundary_event_provenance VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                             (event_id, camera_id, session_id, epoch, sequence, revision_id, crossing.line_id, crossing.track_id,
+                              crossing.direction, started, observed, published, None, _json(refs["pre"]), _json(refs["post"]), tracker_model))
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                shutil.rmtree(folder, ignore_errors=True)
+                video_path.unlink(missing_ok=True)
+                frame_path.unlink(missing_ok=True)
+                raise
+            finally:
+                conn.close()
+        return event_id
+
+    def boundary_event_provenance(self, event_id: str) -> dict[str, Any] | None:
+        row = self.one("SELECT * FROM boundary_event_provenance WHERE event_id=?", (event_id,))
+        if not row:
+            return None
+        value = dict(row)
+        value["pre_frames"] = [f"/api/cameras/{row['camera_id']}/events/{event_id}/evidence/{name}" for name in json.loads(row["pre_frames"])]
+        value["post_frames"] = [f"/api/cameras/{row['camera_id']}/events/{event_id}/evidence/{name}" for name in json.loads(row["post_frames"])]
+        return value
+
+    def boundary_ack_rendered(self, camera_id: str, event_id: str) -> dict[str, Any] | None:
+        now = time.time()
+        self.run("UPDATE boundary_event_provenance SET dashboard_render_ack_received_at_s=coalesce(dashboard_render_ack_received_at_s,?) WHERE event_id=? AND camera_id=?",
+                 (now, event_id, camera_id))
+        row = self.one("SELECT 1 FROM boundary_event_provenance WHERE event_id=? AND camera_id=?", (event_id, camera_id))
+        return self.boundary_event_provenance(event_id) if row else None
+
+    def boundary_session(self, camera_id: str, session_id: str) -> dict[str, Any] | None:
+        row = self.one("SELECT * FROM boundary_sessions WHERE id=? AND camera_id=?", (session_id, camera_id))
+        if not row:
+            return None
+        expected = self.all("SELECT * FROM boundary_session_expected_crossings WHERE session_id=? ORDER BY start_s", (session_id,))
+        ordinary = self.all("SELECT * FROM boundary_session_ordinary_intervals WHERE session_id=? ORDER BY start_s", (session_id,))
+        segments = self.all("SELECT * FROM boundary_test_segments WHERE session_id=? ORDER BY start_s", (session_id,))
+        provenance = self.all(
+            "SELECT p.*,e.review_status FROM boundary_event_provenance p JOIN events e ON e.id=p.event_id "
+            "WHERE p.session_id=? ORDER BY p.source_observed_at_s", (session_id,)
+        )
+        staged = [{"id": item["id"], "line_id": item["line_id"], "start_s": item["start_s"],
+                   "end_s": item["end_s"], "direction": item["direction"],
+                   "source_observed_at_s": item["source_observed_at_s"]} for item in expected]
+        expected_crossings = [{"id": item["id"], "line_id": item["line_id"], "start_s": item["start_s"],
+                               "end_s": item["end_s"], "direction": item["direction"],
+                               "source_observed_at_s": item["source_observed_at_s"]} for item in expected]
+        try:
+            session_epoch_s = datetime.fromisoformat(row["started_at"].replace("Z", "+00:00")).timestamp()
+        except (AttributeError, ValueError):
+            session_epoch_s = 0.0
+        alerts = []
+        for item in provenance:
+            start_s = max(0.0, item["source_started_at_s"] - session_epoch_s)
+            end_s = max(0.0, item["source_observed_at_s"] - session_epoch_s)
+            ordinary_overlap = any(start_s < interval["end_s"] and end_s > interval["start_s"] for interval in ordinary)
+            alerts.append({"id": item["event_id"], "start_s": start_s, "end_s": end_s,
+                           "direction": item["direction"], "status": item["review_status"],
+                           "exposure": "ordinary" if ordinary_overlap else "boundary_line_crossing",
+                           "source_observed_at_s": item["source_observed_at_s"], "published_at_s": item["published_at_s"],
+                           "dashboard_render_ack_received_at_s": item["dashboard_render_ack_received_at_s"]})
+        covered = sorted((item["start_s"], item["end_s"]) for item in segments)
+        merged: list[tuple[float, float]] = []
+        for start, end in covered:
+            if end <= start:
+                continue
+            if merged and start <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+            else:
+                merged.append((start, end))
+        exposure = 0.0
+        for interval in ordinary:
+            for start, end in merged:
+                exposure += max(0.0, min(end, interval["end_s"]) - max(start, interval["start_s"]))
+        return {"schema_version": 1, "id": row["id"], "session_id": row["id"], "camera_id": row["camera_id"], "name": row["test_name"], "split": row["split"], "is_test": bool(row["is_test"]),
+                "frozen_at": row["frozen_at"], "started_at": row["started_at"],
+                "ended_at": row["ended_at"], "state": row["state"], "epoch": row["epoch"],
+                "view_revision_id": row["view_revision_id"], "expected_crossings": expected_crossings,
+                "staged_crossings": staged, "ordinary_intervals": [dict(item) for item in ordinary],
+                "segments": [{"id": item["id"], "start_s": item["start_s"], "end_s": item["end_s"],
+                              "video_id": item["video_id"], "video_url": f"/api/videos/{item['video_id']}"} for item in segments], "alerts": alerts,
+                "gaps": json.loads(row["gaps"] or "[]"), "ordinary_exposure_s": exposure if ordinary and merged else None,
+                "split": row["split"], "frozen_provenance": json.loads(row["frozen_provenance"] or "{}")}
+
+    def boundary_sessions(self, camera_id: str) -> list[dict[str, Any]]:
+        validate_camera_id(camera_id)
+        rows = self.all("SELECT id FROM boundary_sessions WHERE camera_id=? ORDER BY started_at DESC", (camera_id,))
+        return [session for row in rows if (session := self.boundary_session(camera_id, row["id"]))]
+
+    def cleanup_boundary_retention(self, *, now: datetime | None = None, retention_days: int = 7) -> dict[str, int]:
+        if retention_days < 1:
+            raise ValueError("retention_days must be positive")
+        current = now or datetime.now(timezone.utc)
+        cutoff = (current - timedelta(days=retention_days)).isoformat().replace("+00:00", "Z")
+        removed_events = removed_sessions = 0
+        rows = self.all("SELECT id,camera_id,state FROM boundary_sessions WHERE ended_at IS NOT NULL AND ended_at < ?", (cutoff,))
+        for row in rows:
+            provenance = self.all("SELECT event_id FROM boundary_event_provenance WHERE session_id=?", (row["id"],))
+            for item in provenance:
+                event_id = item["event_id"]
+                event = self.one("SELECT video_id,pinned FROM events WHERE id=?", (event_id,))
+                # Pinning is the explicit exception. A confirmation/correction
+                # remains auditable after expiry, but does not retain footage.
+                if event and not event["pinned"]:
+                    media = self.media / f"{event['video_id']}.mp4"
+                    if media.exists():
+                        removed_events += 1
+                    self.run("UPDATE videos SET status='evicted',error='boundary retention expired' WHERE id=?", (event["video_id"],))
+                    media.unlink(missing_ok=True)
+                    (self.frames / f"{event['video_id']}.jpg").unlink(missing_ok=True)
+                    evidence = self.boundary_evidence / event_id
+                    if evidence.parent == self.boundary_evidence:
+                        shutil.rmtree(evidence, ignore_errors=True)
+            segments = self.all("SELECT video_id FROM boundary_test_segments WHERE session_id=?", (row["id"],))
+            for segment in segments:
+                video_id = segment["video_id"]
+                self.run("UPDATE videos SET status='evicted',error='boundary retention expired' WHERE id=?", (video_id,))
+                (self.media / f"{video_id}.mp4").unlink(missing_ok=True)
+                (self.frames / f"{video_id}.jpg").unlink(missing_ok=True)
+            # Keep the annotation/result provenance and video rows as audit
+            # metadata. Their `evicted` state makes the expired media explicit.
+            if row["state"] != "expired":
+                self.run("UPDATE boundary_sessions SET state='expired' WHERE id=?", (row["id"],))
+                removed_sessions += 1
+        return {"events": removed_events, "sessions": removed_sessions}
 
     def job(self, row):
         return {k: row[k] for k in ("id", "status", "progress", "stage", "error")}
@@ -237,6 +941,7 @@ class Store:
         }
 
     def cleanup(self):
+        self.cleanup_boundary_retention()
         with self.lock:
             s = self.system()
             if s["used_percent"] < 85 and s["free_gb"] >= 50:
@@ -1172,12 +1877,17 @@ def create_app(config: dict | None = None) -> Flask:
         retry_after_s=int(config.get("BEHAVIOR_CAMERA_RETRY_AFTER_S", 10)),
     )
     camera_queue = CameraQueue(store, camera_limits)
+    secret_root = Path(config.get("BEHAVIOR_BOUNDARY_SECRETS_DIR", os.getenv(
+        "BEHAVIOR_BOUNDARY_SECRETS_DIR", str(store.root / "camera-secrets")
+    )))
+    boundary_secrets = CameraSecrets(secret_root)
     app = Flask(__name__, template_folder="../templates", static_folder="../static")
     app.config.update(
         MAX_CONTENT_LENGTH=MAX_UPLOAD_BYTES,
         BEHAVIOR_STORE=store,
         BEHAVIOR_WORKER=worker,
         BEHAVIOR_CAMERA_QUEUE=camera_queue,
+        BEHAVIOR_BOUNDARY_SECRETS=boundary_secrets,
         BEHAVIOR_TAILSCALE_ACCESS=access,
     )
 
@@ -1196,7 +1906,7 @@ def create_app(config: dict | None = None) -> Flask:
     def http_error(exc):
         return json_error(exc.description, exc.code or 500)
 
-    bp = behavior_blueprint(store, worker, camera_queue)
+    bp = behavior_blueprint(store, worker, camera_queue, boundary_secrets)
     app.register_blueprint(bp)
 
     @app.get("/")
@@ -1214,9 +1924,278 @@ def create_app(config: dict | None = None) -> Flask:
     return app
 
 
-def behavior_blueprint(store: Store, worker: BehaviorWorker, camera_queue: CameraQueue | None = None):
+def behavior_blueprint(store: Store, worker: BehaviorWorker, camera_queue: CameraQueue | None = None,
+                       boundary_secrets: CameraSecrets | None = None):
     bp = Blueprint("behavior", __name__)
     camera_queue = camera_queue or CameraQueue(store, CameraQueueLimits())
+    boundary_secrets = boundary_secrets or CameraSecrets(store.root / "camera-secrets")
+
+    def boundary_payload(camera_id: str):
+        camera = store.boundary_camera(camera_id)
+        if not camera:
+            return None
+        camera["rtsp_configured"] = boundary_secrets.configured(camera_id)
+        return {"camera": camera, "collector": camera["collector"],
+                "desired_state": camera["desired_state"], "desired_updated_at": camera["desired_updated_at"]}
+
+    @bp.get("/api/cameras")
+    def boundary_camera_list():
+        cameras = []
+        for camera in store.boundary_cameras():
+            camera["rtsp_configured"] = boundary_secrets.configured(camera["id"])
+            cameras.append(camera)
+        return jsonify({"cameras": cameras})
+
+    @bp.put("/api/cameras/<camera_id>")
+    def boundary_camera_put(camera_id):
+        try:
+            validate_camera_id(camera_id)
+            store.boundary_update_config(camera_id, request.get_json(force=True))
+        except Exception as exc:
+            return json_error(str(exc))
+        return jsonify(boundary_payload(camera_id))
+
+    @bp.post("/api/cameras/<camera_id>/setup")
+    def boundary_setup(camera_id):
+        try:
+            validate_camera_id(camera_id)
+            store.boundary_ensure_camera(camera_id)
+            if not boundary_secrets.configured(camera_id):
+                return json_error("camera credentials are not configured locally", 409)
+            store.boundary_set_desired(camera_id, "setup")
+        except Exception as exc:
+            return json_error(str(exc))
+        return jsonify(boundary_payload(camera_id)), 202
+
+    @bp.get("/api/cameras/<camera_id>/previews/<preview_id>")
+    def boundary_preview(camera_id, preview_id):
+        try:
+            validate_camera_id(camera_id)
+            preview_id = validate_id(preview_id, PREVIEW_ID, "preview id")
+        except ValueError as exc:
+            return json_error(str(exc))
+        row = store.one("SELECT path FROM boundary_previews WHERE id=? AND camera_id=?", (preview_id, camera_id))
+        if not row or not Path(row["path"]).is_file():
+            return json_error("reference preview not found", 404)
+        return send_file(Path(row["path"]).resolve(), mimetype="image/jpeg")
+
+    @bp.post("/api/cameras/<camera_id>/reference-views")
+    def boundary_reference_view(camera_id):
+        try:
+            validate_camera_id(camera_id)
+            data = request.get_json(force=True)
+            if not isinstance(data, dict) or set(data) - {"preview_id", "lines"} or "preview_id" not in data:
+                raise ValueError("reference view requires preview_id and optional lines")
+            revision = store.boundary_create_revision(camera_id, data["preview_id"], data.get("lines"))
+        except Exception as exc:
+            return json_error(str(exc))
+        return jsonify({"revision": revision, **(boundary_payload(camera_id) or {})}), 201
+
+    @bp.post("/api/cameras/<camera_id>/reference-views/register")
+    def boundary_reference_register(camera_id):
+        try:
+            validate_camera_id(camera_id)
+            data = request.get_json(force=True)
+            if not isinstance(data, dict) or set(data) != {"preview_id"}:
+                raise ValueError("registration requires preview_id")
+            # The sidecar owns OpenCV work; this only persists a bounded request.
+            store.boundary_request_registration(camera_id, data["preview_id"])
+        except Exception as exc:
+            return json_error(str(exc))
+        return jsonify(boundary_payload(camera_id)), 202
+
+    @bp.get("/api/cameras/<camera_id>/reference-views/<revision_id>")
+    def boundary_reference_image(camera_id, revision_id):
+        try:
+            revision_id = validate_id(revision_id, VIEW_ID, "view revision id")
+        except ValueError as exc:
+            return json_error(str(exc))
+        row = store.one("SELECT image_path FROM boundary_view_revisions WHERE id=? AND camera_id=?", (revision_id, camera_id))
+        if not row or not Path(row["image_path"]).is_file():
+            return json_error("reference view not found", 404)
+        return send_file(Path(row["image_path"]).resolve(), mimetype="image/jpeg")
+
+    @bp.post("/api/cameras/<camera_id>/reference-views/<revision_id>/approve")
+    def boundary_reference_approve(camera_id, revision_id):
+        try:
+            validate_camera_id(camera_id)
+            store.boundary_approve_revision(camera_id, revision_id)
+        except Exception as exc:
+            return json_error(str(exc))
+        return jsonify(boundary_payload(camera_id))
+
+    @bp.post("/api/cameras/<camera_id>/collector/<action>")
+    def boundary_collector_action(camera_id, action):
+        try:
+            validate_camera_id(camera_id)
+            camera = store.boundary_camera(camera_id)
+            if not camera:
+                return json_error("camera not found", 404)
+            if action == "start":
+                if not boundary_secrets.configured(camera_id):
+                    return json_error("camera credentials are not configured locally", 409)
+                if camera["calibration_state"] != "calibrated" or not any(line["enabled"] for line in camera["lines"]):
+                    return json_error("an approved reference view with enabled lines is required", 409)
+                store.boundary_set_desired(camera_id, "running")
+            elif action == "stop":
+                store.boundary_set_desired(camera_id, "stopped")
+            else:
+                return json_error("collector action is invalid", 404)
+        except Exception as exc:
+            return json_error(str(exc))
+        # This response reports the last sidecar heartbeat. `desired_state` is
+        # separate because the HTTP request cannot claim capture has started.
+        return jsonify(boundary_payload(camera_id)), 202
+
+    @bp.get("/api/cameras/<camera_id>/sessions")
+    def boundary_session_list(camera_id):
+        try:
+            validate_camera_id(camera_id)
+        except ValueError as exc:
+            return json_error(str(exc))
+        return jsonify({"sessions": store.boundary_sessions(camera_id)})
+
+    @bp.post("/api/cameras/<camera_id>/test-sessions/start")
+    def boundary_test_start(camera_id):
+        try:
+            validate_camera_id(camera_id)
+            if not boundary_secrets.configured(camera_id):
+                return json_error("camera credentials are not configured locally", 409)
+            camera = store.boundary_camera(camera_id)
+            if not camera or camera["calibration_state"] != "calibrated" or not any(line["enabled"] for line in camera["lines"]):
+                return json_error("an approved reference view with enabled lines is required", 409)
+            data = request.get_json(silent=True) or {}
+            if not isinstance(data, dict) or set(data) - {"name", "split"}:
+                raise ValueError("test session accepts optional name and split")
+            session = store.boundary_test_start(camera_id, data.get("name"), data.get("split", "development"))
+        except Exception as exc:
+            return json_error(str(exc))
+        return jsonify({"session": session, **(boundary_payload(camera_id) or {})}), 202
+
+    @bp.get("/api/cameras/<camera_id>/test-sessions")
+    def boundary_test_list(camera_id):
+        return jsonify({"sessions": [item for item in store.boundary_sessions(camera_id) if item["is_test"]]})
+
+    @bp.get("/api/cameras/<camera_id>/test-sessions/<session_id>")
+    def boundary_test_detail(camera_id, session_id):
+        session = store.boundary_session(camera_id, session_id)
+        if not session or not session["is_test"]:
+            return json_error("test session not found", 404)
+        return jsonify(session)
+
+    @bp.post("/api/cameras/<camera_id>/test-sessions/<session_id>/stop")
+    def boundary_test_stop(camera_id, session_id):
+        try:
+            store.boundary_test_stop(camera_id, session_id)
+        except ValueError as exc:
+            return json_error(str(exc), 404)
+        return jsonify(boundary_payload(camera_id)), 202
+
+    @bp.post("/api/cameras/<camera_id>/test-sessions/<session_id>/expected-crossings")
+    def boundary_expected_create(camera_id, session_id):
+        try:
+            session = store.boundary_session(camera_id, session_id)
+            if not session or not session["is_test"]:
+                return json_error("test session not found", 404)
+            crossing_id = store.boundary_expected_crossing(session_id, request.get_json(force=True))
+        except Exception as exc:
+            return json_error(str(exc), 409 if "frozen" in str(exc) else 400)
+        return jsonify({"id": crossing_id, "session": store.boundary_session(camera_id, session_id)}), 201
+
+    @bp.patch("/api/cameras/<camera_id>/test-sessions/<session_id>/expected-crossings/<crossing_id>")
+    def boundary_expected_update(camera_id, session_id, crossing_id):
+        try:
+            existing = store.one("SELECT 1 FROM boundary_session_expected_crossings WHERE id=? AND session_id=?", (crossing_id, session_id))
+            if not existing:
+                return json_error("expected crossing not found", 404)
+            store.boundary_expected_crossing(session_id, request.get_json(force=True), crossing_id)
+        except Exception as exc:
+            return json_error(str(exc), 409 if "frozen" in str(exc) else 400)
+        return jsonify(store.boundary_session(camera_id, session_id))
+
+    @bp.delete("/api/cameras/<camera_id>/test-sessions/<session_id>/expected-crossings/<crossing_id>")
+    def boundary_expected_delete(camera_id, session_id, crossing_id):
+        session = store.boundary_session(camera_id, session_id)
+        if not session or not session["is_test"]:
+            return json_error("test session not found", 404)
+        if session["frozen_at"]:
+            return json_error("test session annotations are frozen", 409)
+        store.run("DELETE FROM boundary_session_expected_crossings WHERE id=? AND session_id=?", (crossing_id, session_id))
+        return jsonify(store.boundary_session(camera_id, session_id))
+
+    @bp.post("/api/cameras/<camera_id>/test-sessions/<session_id>/ordinary-intervals")
+    def boundary_ordinary_create(camera_id, session_id):
+        try:
+            interval_id = store.boundary_ordinary_interval(session_id, request.get_json(force=True))
+        except Exception as exc:
+            return json_error(str(exc), 409 if "frozen" in str(exc) else 400)
+        return jsonify({"id": interval_id, "session": store.boundary_session(camera_id, session_id)}), 201
+
+    @bp.post("/api/cameras/<camera_id>/test-sessions/<session_id>/freeze")
+    def boundary_test_freeze(camera_id, session_id):
+        try:
+            store.boundary_freeze_test(session_id)
+        except ValueError as exc:
+            return json_error(str(exc), 409 if "active" in str(exc) else 404)
+        return jsonify(store.boundary_session(camera_id, session_id))
+
+    @bp.get("/api/cameras/<camera_id>/test-sessions/<session_id>/export")
+    def boundary_test_export(camera_id, session_id):
+        session = store.boundary_session(camera_id, session_id)
+        if not session or not session["is_test"]:
+            return json_error("test session not found", 404)
+        if not session["frozen_at"]:
+            return json_error("freeze test annotations before export", 409)
+        try:
+            from evaluation.pilot import validate_pilot_session
+            validate_pilot_session(session)
+        except ValueError as exc:
+            return json_error(str(exc), 409)
+        return jsonify(session)
+
+    @bp.post("/api/cameras/<camera_id>/test-sessions/<session_id>/score")
+    def boundary_test_score(camera_id, session_id):
+        session = store.boundary_session(camera_id, session_id)
+        if not session or not session["is_test"]:
+            return json_error("test session not found", 404)
+        if not session["frozen_at"]:
+            return json_error("freeze test annotations before scoring", 409)
+        try:
+            from evaluation.pilot import score_pilot_session
+            return jsonify(score_pilot_session(session))
+        except ValueError as exc:
+            return json_error(str(exc), 409)
+
+    @bp.get("/api/cameras/<camera_id>/sessions/<session_id>")
+    def boundary_session_detail(camera_id, session_id):
+        try:
+            validate_camera_id(camera_id)
+        except ValueError as exc:
+            return json_error(str(exc))
+        session = store.boundary_session(camera_id, session_id)
+        return jsonify(session) if session else json_error("session not found", 404)
+
+    @bp.get("/api/cameras/<camera_id>/events")
+    def boundary_events(camera_id):
+        rows = store.all("SELECT e.* FROM events e JOIN boundary_event_provenance p ON p.event_id=e.id WHERE p.camera_id=? ORDER BY p.source_observed_at_s DESC", (camera_id,))
+        return jsonify({"events": [event_obj(row, store.boundary_event_provenance(row["id"])) for row in rows]})
+
+    @bp.post("/api/cameras/<camera_id>/events/<event_id>/rendered")
+    def boundary_event_rendered(camera_id, event_id):
+        provenance = store.boundary_ack_rendered(camera_id, event_id)
+        if not provenance:
+            return json_error("boundary event not found", 404)
+        return jsonify({"event_id": event_id, "dashboard_render_ack_received_at_s": provenance["dashboard_render_ack_received_at_s"]})
+
+    @bp.get("/api/cameras/<camera_id>/events/<event_id>/evidence/<name>")
+    def boundary_evidence(camera_id, event_id, name):
+        if not re.fullmatch(r"(?:pre|post)-[0-9]{3}\.jpg", name):
+            return json_error("evidence frame not found", 404)
+        provenance = store.one("SELECT 1 FROM boundary_event_provenance WHERE event_id=? AND camera_id=?", (event_id, camera_id))
+        path = store.boundary_evidence / event_id / name
+        if not provenance or not path.is_file():
+            return json_error("evidence frame not found", 404)
+        return send_file(path.resolve(), mimetype="image/jpeg")
 
     def detail(vid):
         v = store.one("SELECT * FROM videos WHERE id=?", (vid,))
@@ -1412,6 +2391,9 @@ def behavior_blueprint(store: Store, worker: BehaviorWorker, camera_queue: Camer
             camera_id = validate_camera_id(camera_id)
         except ValueError as exc:
             return json_error(str(exc))
+        pilot = boundary_payload(camera_id)
+        if pilot:
+            return jsonify(pilot)
         camera = store.camera(camera_id)
         return jsonify({"camera": camera}) if camera else json_error("camera not found", 404)
 
@@ -1469,6 +2451,9 @@ def behavior_blueprint(store: Store, worker: BehaviorWorker, camera_queue: Camer
         v = store.one("SELECT * FROM videos WHERE id=?", (vid,))
         if not v:
             return json_error("video not found", 404)
+        source = store.one("SELECT source_kind FROM video_sources WHERE video_id=?", (vid,))
+        if source and source["source_kind"] in {"boundary_collector", "boundary_test_capture"}:
+            return json_error("boundary collector evidence is reviewed as recorded and is not sent to VLM reanalysis", 409)
         if store.one(
             "SELECT 1 FROM events WHERE video_id=? AND (pinned=1 OR review_status='confirmed' OR correction<>'')",
             (vid,),
@@ -1600,8 +2585,8 @@ def behavior_blueprint(store: Store, worker: BehaviorWorker, camera_queue: Camer
     return bp
 
 
-def event_obj(e):
-    return {
+def event_obj(e, provenance: dict[str, Any] | None = None):
+    value = {
         "id": e["id"],
         "video_id": e["video_id"],
         "start_s": e["start_s"],
@@ -1618,3 +2603,6 @@ def event_obj(e):
         "model": e["model"],
         "config_version": e["config_version"],
     }
+    if provenance:
+        value["boundary_provenance"] = provenance
+    return value

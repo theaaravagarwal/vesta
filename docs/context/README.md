@@ -5,6 +5,7 @@ Working notes for the Vesta campus-camera project. These documents separate insp
 - [Project status](project-status.md)
 - [Roadmap](roadmap.md)
 - [Evaluation and data handling](evaluation-and-data.md)
+- [Supervised pilot plan](pilot-plan.md)
 - [Decisions and provenance](decisions.md)
 - [Compute host notes](compute-host.md) (maintained separately)
 - [Compute hardware and network measurements](compute.md)

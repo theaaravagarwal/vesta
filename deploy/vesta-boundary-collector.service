@@ -1,0 +1,17 @@
+[Unit]
+Description=Vesta fixed-camera boundary collector
+After=network-online.target vesta-web.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h/vesta
+EnvironmentFile=%h/.config/vesta/host.env
+Environment=PATH=%h/vesta/.tools/bin:%h/vesta/.venv/bin:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/vesta/.venv/bin/python scripts/boundary_collector.py --runtime %h/vesta/runtime/behavior
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
