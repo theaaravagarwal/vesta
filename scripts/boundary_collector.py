@@ -11,7 +11,13 @@ from __future__ import annotations
 import argparse
 import os
 import signal
+import sys
 from pathlib import Path
+
+# Running this file directly makes Python put `scripts/`, rather than the
+# checkout root, on sys.path.  The user service intentionally uses the same
+# direct CLI form as the documented operator command.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from behavior import Store
 from behavior.boundary import BoundaryCollectorService, CameraSecrets
