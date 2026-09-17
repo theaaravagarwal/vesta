@@ -257,7 +257,10 @@ class BehaviorTests(unittest.TestCase):
         self.assertEqual(
             client.get(
                 "/review",
-                headers={"Tailscale-User-Login": "aarav"},
+                headers={
+                    "Tailscale-User-Login": "aarav",
+                    "X-Forwarded-For": "127.0.0.1",
+                },
                 environ_base={"REMOTE_ADDR": "100.64.0.2"},
             ).status_code,
             403,
@@ -281,6 +284,7 @@ class BehaviorTests(unittest.TestCase):
         # media object exists.
         self.assertEqual(client.get("/api/videos/not-a-video/media").status_code, 403)
         self.assertEqual(client.get("/api/videos/not-a-video/media", headers=headers).status_code, 404)
+        self.assertEqual(client.get("/static/review.js").status_code, 403)
 
     def test_tailscale_access_rejects_cross_origin_mutations_but_allows_authenticated_cli(self):
         app = create_app(
